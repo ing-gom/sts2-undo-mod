@@ -70,4 +70,4 @@ dotnet build Sts2UndoMod.csproj -c Release
 
 ## 라이선스
 
-미정.
+[MIT](LICENSE).

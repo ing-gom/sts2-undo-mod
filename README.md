@@ -70,4 +70,4 @@ Attach this when reporting issues.
 
 ## License
 
-TBD.
+[MIT](LICENSE).
