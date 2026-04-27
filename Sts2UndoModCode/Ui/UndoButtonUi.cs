@@ -46,7 +46,7 @@ internal static class UndoButtonUi
         var btn = new Button
         {
             Text = "↶ Z",
-            TooltipText = "되돌리기 (Z) / 턴 되돌리기 (Shift+Z)",
+            TooltipText = LocalizedTooltip(),
             CustomMinimumSize = new Vector2(64, 64),
             FocusMode = Control.FocusModeEnum.None,  // never steal keyboard focus
             MouseDefaultCursorShape = Control.CursorShape.PointingHand,
@@ -229,6 +229,15 @@ internal static class UndoButtonUi
         var customMin = AccessTools.Property(n.GetType(), "CustomMinimumSize");
         if (customMin?.GetValue(n) is Vector2 c) return c;
         return new Vector2(64, 64);
+    }
+
+    private static string LocalizedTooltip()
+    {
+        // Korean locale codes from Godot are "ko" / "ko_KR" — prefix-match covers both.
+        var locale = TranslationServer.GetLocale() ?? string.Empty;
+        if (locale.StartsWith("ko", StringComparison.OrdinalIgnoreCase))
+            return "되돌리기 (Z) / 턴 되돌리기 (Shift+Z)";
+        return "Undo (Z) / Undo Turn (Shift+Z)";
     }
 
     private static IEnumerable<Node> EnumerateTree(Node root)
