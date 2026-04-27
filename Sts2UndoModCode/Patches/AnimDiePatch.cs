@@ -32,15 +32,7 @@ public static class AnimDiePatch
     /// <summary>
     /// Fallback wait if we cannot read the actual spine 'die' animation length.
     /// </summary>
-    public const float DieVisibleFallbackSeconds = 0.9f;
-
-    /// <summary>
-    /// Cap the wait time even when the spine 'die' anim is longer. Most die
-    /// anim climaxes happen in the first ~0.9s; the rest is dust settling
-    /// the player doesn't want to watch. User reported "the dead enemy
-    /// stays for slightly long" — the cap is the primary lever.
-    /// </summary>
-    public const float DieWaitCapSeconds = 0.9f;
+    public const float DieVisibleFallbackSeconds = 1.5f;
 
     // Re-enabled fade tween 2026-04-28 with stricter lifecycle:
     //   - StartFadeOutTween kills any prior tween for this creature BEFORE
@@ -222,32 +214,35 @@ public static class AnimDiePatch
         // step fails we just skip to the modulate hide.
         float dieDuration = TryPlaySpineDie(creature);
 
-        // Wait time = min(actual die anim duration, cap). Capped so corpses
-        // don't linger 2-3 seconds for monsters with long die anims.
-        float baseWait = dieDuration > 0f ? dieDuration : DieVisibleFallbackSeconds;
-        float wait = System.Math.Min(baseWait, DieWaitCapSeconds);
-
-        // Concurrently fade the body's modulate alpha to 0 over the wait.
-        // This makes the body visually dissolve DURING the spine die animation
-        // instead of staying at full visibility then popping out at the end.
-        // NMonsterDeathVfx (vanilla cinder shader) is now skipped — the fade
-        // tween produces equivalent disappear with a much shorter total time
-        // (~0.9s vs ~3-4s previously).
-        StartFadeOutTween(creature, wait);
-
+        // Phase 1: wait for the FULL spine 'die' anim to play out — the user
+        // wants the "쓰러지고 (collapse)" pose to be visible end-to-end. No
+        // cap; long-anim monsters (3-segment centipede etc.) get their full
+        // closure.
+        float spineWait = dieDuration > 0f ? dieDuration : DieVisibleFallbackSeconds;
         try
         {
             var tree = creature.GetTree();
             if (tree != null)
             {
-                var timer = tree.CreateTimer(wait);
+                var timer = tree.CreateTimer(spineWait);
                 await creature.ToSignal(timer, "timeout");
             }
         }
         catch (Exception ex)
         {
-            UndoLogger.Warn($"[AnimDie] timer wait failed: {ex.Message}");
+            UndoLogger.Warn($"[AnimDie] spine wait failed: {ex.Message}");
         }
+
+        if (!GodotObject.IsInstanceValid(creature)) return;
+
+        // Phase 2: trigger NMonsterDeathVfx (the "재에 날라가듯" ash/cinder
+        // dissolve) and DETACH IMMEDIATELY after starting it. The vfx
+        // reparents the body into its own SubViewport before dissolving, so
+        // the body keeps rendering with the cinder shader even after NCreature
+        // (HP bar, intent shell) is detached. This way the ash effect is
+        // visible without holding the entire NCreature subtree on-screen for
+        // the full 2.5s vfx duration.
+        TriggerDeathFadeVfxFireAndForget(creature);
 
         if (!GodotObject.IsInstanceValid(creature)) return;
 
@@ -351,23 +346,14 @@ public static class AnimDiePatch
     }
 
     /// <summary>
-    /// Set spine track 0 to 'die' (non-looping) and return the animation's
-    /// real duration in seconds. 0 means we couldn't query it — caller falls
-    /// back to <see cref="DieVisibleFallbackSeconds"/>.
+    /// Trigger NMonsterDeathVfx (the "ash blowing away" cinder dissolve) and
+    /// return immediately without awaiting completion. The vfx reparents
+    /// `creature.Body` into its own SubViewport — once that's done the body
+    /// keeps rendering with the cinder shader regardless of whether NCreature
+    /// is still in the tree. Caller can detach NCreature right after, and
+    /// the ash effect plays out on its own (~2.5s shader threshold tween).
     /// </summary>
-    /// <summary>
-    /// Play `NMonsterDeathVfx` (the cinder/ash particle fade) and await its
-    /// completion. Mirrors the original AnimDie's late-stage logic:
-    /// <code>
-    ///   var vfx = NMonsterDeathVfx.Create(this, cancelToken);
-    ///   parent.AddChildSafely(vfx); parent.MoveChild(vfx, GetIndex());
-    ///   await vfx.PlayVfx();
-    /// </code>
-    /// Skips when monster lacks `ShouldFadeAfterDeath` or body is invisible —
-    /// matching vanilla behavior. Best-effort throughout: any reflection
-    /// failure just returns and the caller continues to detach normally.
-    /// </summary>
-    private static async System.Threading.Tasks.Task TryPlayDeathFadeVfx(NCreature creature)
+    private static void TriggerDeathFadeVfxFireAndForget(NCreature creature)
     {
         try
         {
@@ -386,8 +372,6 @@ public static class AnimDiePatch
                 "MegaCrit.Sts2.Core.Nodes.Vfx.NMonsterDeathVfx");
             if (vfxType == null) return;
 
-            // NMonsterDeathVfx.Create(NCreature, CancellationToken) — pass our
-            // own throwaway token; we don't need to interrupt the vfx via this.
             var createMethod = HarmonyLib.AccessTools.Method(vfxType, "Create",
                 new[] { typeof(NCreature), typeof(System.Threading.CancellationToken) });
             if (createMethod == null) return;
@@ -398,7 +382,6 @@ public static class AnimDiePatch
             var parent = creature.GetParent();
             if (parent == null) return;
 
-            // Use AddChildSafely if available, else direct AddChild.
             var addSafely = HarmonyLib.AccessTools.Method(parent.GetType(), "AddChildSafely");
             try
             {
@@ -414,14 +397,23 @@ public static class AnimDiePatch
             var playMethod = HarmonyLib.AccessTools.Method(vfxType, "PlayVfx");
             if (playMethod == null) return;
 
-            var task = playMethod.Invoke(vfx, null) as System.Threading.Tasks.Task;
-            if (task != null) await task;
+            // Fire-and-forget — invoke PlayVfx, do NOT await. The vfx already
+            // reparents the body into its subviewport in the synchronous
+            // portion of the method, so by the time we return the body is
+            // independent of NCreature and dissolves on its own timeline.
+            try { playMethod.Invoke(vfx, null); } catch { }
         }
         catch (Exception ex)
         {
-            UndoLogger.Warn($"[AnimDie] death fade vfx failed: {ex.Message}");
+            UndoLogger.Warn($"[AnimDie] death fade vfx (fire-and-forget) failed: {ex.Message}");
         }
     }
+
+    /// <summary>
+    /// Set spine track 0 to 'die' (non-looping) and return the animation's
+    /// real duration in seconds. 0 means we couldn't query it — caller falls
+    /// back to <see cref="DieVisibleFallbackSeconds"/>.
+    /// </summary>
 
     private static float TryPlaySpineDie(NCreature creature)
     {
