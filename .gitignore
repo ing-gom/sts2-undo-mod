@@ -1,0 +1,24 @@
+# Godot 4+
+.godot/
+*.translation
+
+# .NET / Rider / VS
+bin/
+obj/
+.idea/
+.vs/
+*.user
+*.suo
+
+# Local-only build overrides
+local.props
+
+# Third-party reference code (not for distribution)
+_reference/
+
+# Logs / runtime artifacts
+*.log
+probe.log
+
+# Release artifacts
+release/

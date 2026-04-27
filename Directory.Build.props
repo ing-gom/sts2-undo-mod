@@ -1,0 +1,9 @@
+<Project>
+    <PropertyGroup>
+        <!-- Megadot 4.5.1 mono executable for export-pack on publish -->
+        <GodotPath>C:/megadot/MegaDot_v4.5.1-stable_mono_win64.exe</GodotPath>
+
+        <!-- If sts2 is not found automatically, uncomment and set manually -->
+        <!-- <Sts2Path>?/steamapps/common/Slay the Spire 2</Sts2Path> -->
+    </PropertyGroup>
+</Project>
