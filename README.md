@@ -4,6 +4,8 @@ A **Slay the Spire 2** mod that lets you undo card plays and turns during combat
 
 > Misclicked a card? Played a power in the wrong order? Just press **Z**.
 
+![In-combat undo button next to the energy display](docs/screenshots/preview-undo.png)
+
 [한국어 README](README.ko.md)
 
 ---

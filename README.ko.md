@@ -4,6 +4,8 @@
 
 > 카드를 잘못 냈거나, 파워 사용 순서를 헷갈렸나요? **Z** 키만 누르세요.
 
+![에너지 표시 옆의 전투 중 되돌리기 버튼](docs/screenshots/preview-undo.png)
+
 [English README](README.md)
 
 ---
