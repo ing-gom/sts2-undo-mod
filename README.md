@@ -19,6 +19,9 @@ A **Slay the Spire 2** mod that lets you undo card plays and turns during combat
 - **In-combat undo button** next to the energy display (mirrors the `Z` hotkey)
 - Works only inside an active combat — *no undo after death, no undo on the map*
 - Up to **30 snapshots** retained per combat
+- **Singleplayer only** — the manifest declares `"affects_gameplay": true`, so the
+  game's mod loader disables this mod in multiplayer sessions. Don't try to use
+  it in co-op; the rewind would desync from the other player's state.
 
 ## How it works
 
