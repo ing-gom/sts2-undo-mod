@@ -326,6 +326,14 @@ internal sealed class CombatSnapshot
 
         foreach (var pm in c.Powers)
         {
+            // MutableClone preserves subtype-specific private fields (e.g.
+            // SurroundedPower._facing) that the explicit Amount/internalData
+            // capture path misses. Restore-side reads fields back onto live
+            // (mirrors RelicSnapshot.Clone). Falls back gracefully on failure.
+            PowerModel? pmClone = null;
+            try { pmClone = (PowerModel)pm.MutableClone(); }
+            catch (Exception ex) { UndoLogger.Warn($"[Snapshot] power MutableClone failed ({pm.Id.Entry}): {ex.Message}"); }
+
             snap.Powers.Add(new PowerSnapshot
             {
                 Id = pm.Id,
@@ -335,6 +343,7 @@ internal sealed class CombatSnapshot
                 InternalDataClone = DeepCloner.CloneObject(
                     ReflectionCache.PowerInternalDataField?.GetValue(pm)),
                 Ref = pm,
+                Clone = pmClone,
             });
         }
 
@@ -919,6 +928,14 @@ internal struct PowerSnapshot
     /// attached. On revive we reattach the same instance (preserving any
     /// hook subscriptions) instead of dropping the powers entirely.</summary>
     public PowerModel? Ref;
+    /// <summary>Result of the game's own PowerModel.MutableClone() — preserves
+    /// every subtype private field (SurroundedPower._facing, ReattachPower
+    /// counters, etc.) that the targeted Amount/_internalData capture misses.
+    /// Restore copies fields back onto the live instance, skipping identity
+    /// (`_owner`/`_canonicalInstance`/Id) and `_internalData` (the latter has
+    /// its own DeepCloneFields path that re-INITs rather than preserves
+    /// state — the InternalDataClone field above is the truth source).</summary>
+    public PowerModel? Clone;
 }
 
 internal struct MonsterMoveSnapshot

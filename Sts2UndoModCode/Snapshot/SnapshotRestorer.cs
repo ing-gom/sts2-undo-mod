@@ -2543,6 +2543,24 @@ internal static class SnapshotRestorer
             if (ReflectionCache.PowerInternalDataField != null)
                 ReflectionCache.PowerInternalDataField.SetValue(
                     live, DeepCloner.CloneObject(snapPower.InternalDataClone));
+
+            // Copy MutableClone() result fields back onto the live instance —
+            // catches subtype private fields the explicit setters above don't
+            // cover. Concrete trigger: SurroundedPower._facing (Kaiser Crab Boss
+            // mechanic) — body.Scale rolls back via VisualBodyScale but _facing
+            // would otherwise stay desynced from the visual, causing subsequent
+            // attacks to skip the flip and the player to look "stuck" facing the
+            // wrong way. Skips _owner/_canonicalInstance/Id (live identity must
+            // not change) and _internalData (handled above; clone's value is
+            // re-inited via DeepCloneFields and would lose state).
+            if (snapPower.Clone != null && live.GetType() == snapPower.Clone.GetType())
+            {
+                foreach (var f in GetPowerCopyFields(live.GetType()))
+                {
+                    try { f.SetValue(live, f.GetValue(snapPower.Clone)); }
+                    catch { }
+                }
+            }
             liveList.Add(live);
         }
         if (reattached > 0)
@@ -2610,6 +2628,33 @@ internal static class SnapshotRestorer
                     or "<Category>k__BackingField" or "<Entry>k__BackingField") continue;
                 // Skip event delegates — copying them would re-target subscribers
                 // away from the live instance to the clone (which gets discarded).
+                if (typeof(Delegate).IsAssignableFrom(f.FieldType)) continue;
+                list.Add(f);
+            }
+        }
+        return list.ToArray();
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, FieldInfo[]> _powerCopyFieldCache = new();
+
+    private static FieldInfo[] GetPowerCopyFields(Type type)
+        => _powerCopyFieldCache.GetOrAdd(type, BuildPowerCopyFields);
+
+    private static FieldInfo[] BuildPowerCopyFields(Type type)
+    {
+        var list = new List<FieldInfo>();
+        for (var t = type; t != null && t != typeof(object); t = t.BaseType)
+        {
+            foreach (var f in t.GetFields(BindingFlags.Public | BindingFlags.NonPublic
+                                          | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+            {
+                if (f.IsLiteral || f.IsInitOnly) continue;
+                // _internalData has its own DeepCloner round-trip path above; the
+                // clone's value was re-initialized by PowerModel.DeepCloneFields
+                // and would CLOBBER the captured state if copied here.
+                if (f.Name is "_canonicalInstance" or "_owner" or "_internalData") continue;
+                if (f.Name is "<Id>k__BackingField" or "<IsMutable>k__BackingField"
+                    or "<Category>k__BackingField" or "<Entry>k__BackingField") continue;
                 if (typeof(Delegate).IsAssignableFrom(f.FieldType)) continue;
                 list.Add(f);
             }
