@@ -8,6 +8,8 @@ A **Slay the Spire 2** mod that lets you undo card plays and turns during combat
 
 [한국어 README](README.ko.md)
 
+**Nexus Mods:** https://www.nexusmods.com/slaythespire2/mods/716
+
 ---
 
 ## Features
@@ -41,7 +43,9 @@ You can also click the `↶ Z` button that appears near the energy display.
 
 ## Installation
 
-1. Download the latest release `Sts2UndoMod.dll` and `Sts2UndoMod.json`.
+1. Download the latest release `Sts2UndoMod.dll` and `Sts2UndoMod.json` from
+   [Nexus Mods](https://www.nexusmods.com/slaythespire2/mods/716) or
+   [GitHub Releases](../../releases).
 2. Copy both files into:
    ```
    <Slay the Spire 2 install>/mods/Sts2UndoMod/
@@ -69,6 +73,22 @@ The mod writes a log to:
 ~/.config/Sts2UndoMod/probe.log   (Linux/macOS)
 ```
 Attach this when reporting issues.
+
+## Credits
+
+This mod stands on the shoulders of earlier work. Big thanks to:
+
+- **JiesiLuo** — author of [`UndoAndRedo`](https://github.com/luojiesi/SLS2Mods)
+  for Slay the Spire 2, the direct predecessor this mod is built on. The
+  combat-state snapshot architecture and much of the groundwork comes from
+  that project.
+- **filippobaroni** — author of
+  [`Undo the Spire`](https://github.com/filippobaroni/undo-the-spire) for
+  Slay the Spire 1, which originated the core idea of full combat-state
+  snapshots for undo.
+- **MegaCrit** — for Slay the Spire 2.
+- **HarmonyX** — runtime patching library used by this mod (bundled with
+  the game; not redistributed here).
 
 ## License
 

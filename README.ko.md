@@ -8,6 +8,8 @@
 
 [English README](README.md)
 
+**Nexus Mods:** https://www.nexusmods.com/slaythespire2/mods/716
+
 ---
 
 ## 기능
@@ -41,7 +43,8 @@
 
 ## 설치
 
-1. 최신 릴리스에서 `Sts2UndoMod.dll`과 `Sts2UndoMod.json`을 받습니다.
+1. [Nexus Mods](https://www.nexusmods.com/slaythespire2/mods/716) 또는
+   [GitHub Releases](../../releases)에서 `Sts2UndoMod.dll`과 `Sts2UndoMod.json`을 받습니다.
 2. 두 파일을 다음 경로에 복사합니다:
    ```
    <Slay the Spire 2 설치 폴더>/mods/Sts2UndoMod/
@@ -69,6 +72,21 @@ dotnet build Sts2UndoMod.csproj -c Release
 ~/.config/Sts2UndoMod/probe.log   (Linux/macOS)
 ```
 이슈 등록 시 함께 첨부해 주세요.
+
+## 크레딧
+
+이 모드는 앞서 만들어진 작업들 위에 서 있습니다. 다음 분들께 감사드립니다:
+
+- **JiesiLuo** — Slay the Spire 2용
+  [`UndoAndRedo`](https://github.com/luojiesi/SLS2Mods) 모드 제작자.
+  본 모드의 직접적인 베이스가 된 작업으로, 전투 상태 스냅샷 아키텍처와
+  핵심 기반 작업의 다수가 해당 프로젝트에서 비롯되었습니다.
+- **filippobaroni** — Slay the Spire 1용
+  [`Undo the Spire`](https://github.com/filippobaroni/undo-the-spire) 제작자.
+  전투 전체 스냅샷 기반 Undo 라는 핵심 컨셉의 원조입니다.
+- **MegaCrit** — Slay the Spire 2 개발사.
+- **HarmonyX** — 본 모드가 사용하는 런타임 패칭 라이브러리 (게임에 동봉되어
+  있으며, 본 모드는 별도 재배포하지 않습니다).
 
 ## 라이선스
 
