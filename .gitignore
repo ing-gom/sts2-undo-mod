@@ -23,3 +23,10 @@ probe.log
 
 # Release artifacts
 release/
+
+# Stable-variant release zips at repo root are build artifacts (not
+# committed — only the manifest bump goes into the Release commit).
+# Beta-variant zips ARE intentionally tracked so users without the
+# STS2 beta opt-in can download a prebuilt dll, so we whitelist them.
+/Sts2UndoMod-v*.zip
+!/Sts2UndoMod-v*-beta.zip
