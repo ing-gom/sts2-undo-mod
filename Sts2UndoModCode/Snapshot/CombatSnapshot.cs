@@ -196,6 +196,12 @@ internal sealed class CombatSnapshot
                             snap.PetCombatIds.Add(c.CombatId.Value);
 
                 CaptureOrbs(snap, pcs);
+
+                // Diagnostic: dump hand cards' _localModifiers presence so we
+                // can verify Pounce/Unrelenting-style local cost modifiers
+                // round-trip through capture+restore. Pairs with restore-side
+                // [CardMods] line.
+                LogHandLocalModifiersAtCapture(pcs);
             }
 
             // Relics
@@ -233,6 +239,33 @@ internal sealed class CombatSnapshot
                 $"cards={tCards}ms ({cardCount}) " +
                 $"relics={tRelics}ms ({relicCount}) " +
                 $"potions={tPotions}ms ({potionCount})");
+    }
+
+    private static void LogHandLocalModifiersAtCapture(PlayerCombatState pcs)
+    {
+        if (ReflectionCache.CardEnergyCostLocalModifiersField == null) return;
+        try
+        {
+            CardPile? hand = null;
+            foreach (var pile in pcs.AllPiles)
+                if (pile.Type == PileType.Hand) { hand = pile; break; }
+            if (hand == null) return;
+
+            var entries = new List<string>();
+            foreach (var card in hand.Cards)
+            {
+                var energyCost = ReflectionCache.CardEnergyCostProp?.GetValue(card);
+                if (energyCost == null) continue;
+                var mods = ReflectionCache.CardEnergyCostLocalModifiersField.GetValue(energyCost)
+                    as System.Collections.IList;
+                int n = mods?.Count ?? 0;
+                if (n == 0) continue;
+                entries.Add($"{card.Id.Entry}(mods={n})");
+            }
+            if (entries.Count > 0)
+                UndoLogger.Info($"[CardMods] hand at capture: [{string.Join(", ", entries)}]");
+        }
+        catch (Exception ex) { UndoLogger.Warn($"[CardMods] capture log: {ex.Message}"); }
     }
 
     private static void CaptureOrbs(CombatSnapshot snap, PlayerCombatState pcs)
@@ -281,7 +314,26 @@ internal sealed class CombatSnapshot
     private static void CaptureCreatures(CombatSnapshot snap, CombatState cs)
     {
         foreach (var c in cs.Creatures)
+        {
             snap.Creatures.Add(CaptureCreature(c));
+            // Player-side Powers dump on capture — pairs with the restore-side
+            // dump in SnapshotRestorer.RestoreCreaturePowers. Lets us trace
+            // cost-modifier powers (FreeSkillPower from Pounce, FreeAttackPower,
+            // FreePowerPower) across the full snapshot/restore lifecycle so
+            // the user-reported "Pounce + Undo breaks 0-cost" pattern is
+            // visible in undo.log without needing repro instrumentation.
+            if (c.Side == CombatSide.Player)
+            {
+                var summary = new List<string>();
+                foreach (var pm in c.Powers)
+                {
+                    var amt = ReflectionCache.PowerAmountField.GetValue(pm);
+                    summary.Add($"{pm.Id.Entry}={amt}");
+                }
+                if (summary.Count > 0)
+                    UndoLogger.Info($"[Powers] player at capture: [{string.Join(", ", summary)}]");
+            }
+        }
 
         // Once per game session, dump the tree of a known-alive enemy so we
         // have a reference to compare against the revive shell. Without a

@@ -167,14 +167,64 @@ internal static class ReflectionCache
     public static readonly FieldInfo? PowerOwnerField =
         AccessTools.Field(typeof(PowerModel), "_owner");
 
+    /// <summary>PowerModel.ActivateHooks / DeactivateHooks — register/unregister
+    /// the power's Hook subscriptions (BeforeCardPlayed, EnergyCost modifiers,
+    /// etc.). Called by the game when a power is applied / removed from a
+    /// creature. Our restore path manipulates `_powers` list directly via
+    /// reflection, bypassing the official Apply/Remove pipeline — without
+    /// also calling these, hook subscriptions get out of sync with list
+    /// membership. Concrete bug: Pounce → FreeSkillPower applied → Undo →
+    /// FreeSkillPower removed from list but its BeforeCardPlayed hook still
+    /// fires, making the next skill 0-cost when it shouldn't be (or vice
+    /// versa: power restored to list but hook not re-subscribed, so cost
+    /// modifier doesn't fire). Discovered by walking the PowerModel
+    /// inheritance chain — the methods may live on a HookSubscriber base.</summary>
+    public static readonly MethodInfo? PowerActivateHooksMethod =
+        FindMethodOnPowerModelChain("ActivateHooks");
+    public static readonly MethodInfo? PowerDeactivateHooksMethod =
+        FindMethodOnPowerModelChain("DeactivateHooks");
+
+    private static MethodInfo? FindMethodOnPowerModelChain(string name)
+    {
+        for (var t = typeof(PowerModel); t != null && t != typeof(object); t = t.BaseType)
+        {
+            var m = AccessTools.Method(t, name);
+            if (m != null) return m;
+        }
+        return null;
+    }
+
     // Card back-reference fixups (post-MutableClone restore). Without these,
     // global cost modifiers (e.g. VoidForm) and CalculatedVars (e.g. exhaust-count
     // damage multipliers) read state from the clone instead of the live card —
     // power cards in particular fail to register as playable.
+    // CardEnergyCost lives in MegaCrit.Sts2.Core.Entities.Cards (NOT
+    // .Core.Models as it might appear from convention). Verified directly
+    // against sts2.dll metadata 2026-04-29. Until this was fixed, the
+    // resolved Type was null, EnergyCostCardField was null, and the
+    // FixCardBackReferences EnergyCost path silently no-op'd — leaving
+    // every restored card's _energyCost._card pointing at the clone
+    // instead of live, which broke cost-modifier round-tripping (Pounce
+    // / Unrelenting / Havoc 0-cost effects, VoidForm-style power cost
+    // modifiers, etc.).
     public static readonly Type? CardEnergyCostType =
-        AccessTools.TypeByName("MegaCrit.Sts2.Core.Models.CardEnergyCost");
+        AccessTools.TypeByName("MegaCrit.Sts2.Core.Entities.Cards.CardEnergyCost");
     public static readonly FieldInfo? EnergyCostCardField =
         CardEnergyCostType != null ? AccessTools.Field(CardEnergyCostType, "_card") : null;
+
+    // CardEnergyCost._localModifiers — list of per-card LocalCostModifier
+    // entries used by Pounce/Unrelenting/Havoc to apply "next attack/skill
+    // costs 0" effects via card.EnergyCost.AddUntilPlayed(0) etc. Lives on
+    // CardEnergyCost (which sits on card._energyCost), NOT on CardModel
+    // directly. CardEnergyCost.Clone() creates a fresh _localModifiers list,
+    // so a snapshot's clone has its own list — but only if our restore
+    // correctly copies the cloned CardEnergyCost back onto the live card.
+    // Diagnostic logging reads this field to verify the modifier list
+    // round-trips through undo.
+    public static readonly FieldInfo? CardEnergyCostLocalModifiersField =
+        CardEnergyCostType != null
+            ? AccessTools.Field(CardEnergyCostType, "_localModifiers")
+            : null;
     public static readonly PropertyInfo? CardEnergyCostProp =
         AccessTools.Property(typeof(CardModel), "EnergyCost");
     public static readonly PropertyInfo? CardDynamicVarsProp =
@@ -579,6 +629,8 @@ internal static class ReflectionCache
         Check(nameof(PcsPetsField), PcsPetsField);
         Check(nameof(PcsPilesField), PcsPilesField);
         Check(nameof(PowerInternalDataField), PowerInternalDataField);
+        Check(nameof(PowerActivateHooksMethod), PowerActivateHooksMethod);
+        Check(nameof(PowerDeactivateHooksMethod), PowerDeactivateHooksMethod);
         Check(nameof(MonsterRngField), MonsterRngField);
         Check(nameof(MonsterSpawnedField), MonsterSpawnedField);
         Check(nameof(MonsterMoveStateMachineField), MonsterMoveStateMachineField);

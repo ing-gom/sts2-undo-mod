@@ -136,6 +136,22 @@ public static class AnimDiePatch
         UndoLogger.Info($"[AnimDie] cleared {freed} detached zombies on combat end");
     }
 
+    /// <summary>
+    /// Monster type names whose vanilla AnimDie runs special logic (phase
+    /// transitions, spawn-on-death, custom revive) that breaks when we detach
+    /// the NCreature out of the scene tree. Reported symptom: phase-1 dies,
+    /// the body disappears, and the game freezes because the phase-2 spawn /
+    /// revive logic can no longer find the node it expected.
+    ///
+    /// Matched against `monster.GetType().Name` (no namespace). Pass-through
+    /// to vanilla AnimDie for these — undo across their death isn't supported,
+    /// but the fight stops freezing.
+    /// </summary>
+    public static readonly HashSet<string> SkipReplacementMonsterTypes = new()
+    {
+        "TestSubject", // 실험체 — phase-1 → phase-2 transition; reported 2026-04-29
+    };
+
     [HarmonyPrefix]
     public static bool Prefix(NCreature __instance, bool __0, ref System.Threading.Tasks.Task __result)
     {
@@ -150,9 +166,21 @@ public static class AnimDiePatch
             // those monsters.
             if (!HasDieAnimation(__instance))
             {
-                UndoLogger.Info($"[AnimDie] no 'die' spine anim on instId={__instance.GetInstanceId()} — passing through to vanilla AnimDie");
+                UndoLogger.Info($"[AnimDie] no 'die' spine anim on instId={__instance.GetInstanceId()} monster={GetMonsterTypeName(__instance)} — passing through to vanilla AnimDie");
                 return true; // run original
             }
+
+            // Some monsters have a normal 'die' spine anim but their vanilla
+            // AnimDie still runs phase-transition / spawn-on-death logic that
+            // our detach interferes with. Skip our replacement for those by
+            // type name (see SkipReplacementMonsterTypes).
+            var monsterTypeName = GetMonsterTypeName(__instance);
+            if (monsterTypeName != null && SkipReplacementMonsterTypes.Contains(monsterTypeName))
+            {
+                UndoLogger.Info($"[AnimDie] monster={monsterTypeName} on skiplist — passing through to vanilla AnimDie");
+                return true; // run original
+            }
+
             __result = RunReplacementDeathAnim(__instance, __0);
             return false; // skip original AnimDie — never frees body
         }
@@ -161,6 +189,22 @@ public static class AnimDiePatch
             UndoLogger.Warn($"[AnimDie] replacement setup failed, falling back to original: {ex.Message}");
             return true;
         }
+    }
+
+    /// <summary>
+    /// Best-effort `monster.GetType().Name` for the entity bound to this
+    /// NCreature. Used both for diagnostic logging and for the skiplist
+    /// lookup. Returns null if anything in the chain is missing — caller
+    /// treats null as "don't apply skiplist".
+    /// </summary>
+    private static string? GetMonsterTypeName(NCreature creature)
+    {
+        try
+        {
+            var monster = creature?.Entity?.Monster;
+            return monster?.GetType().Name;
+        }
+        catch { return null; }
     }
 
     /// <summary>
@@ -208,7 +252,7 @@ public static class AnimDiePatch
     private static async System.Threading.Tasks.Task RunReplacementDeathAnimInner(
         NCreature creature, bool argZero)
     {
-        UndoLogger.Info($"[AnimDie] replacement starting on instId={creature.GetInstanceId()} arg={argZero}");
+        UndoLogger.Info($"[AnimDie] replacement starting on instId={creature.GetInstanceId()} monster={GetMonsterTypeName(creature) ?? "?"} arg={argZero}");
 
         // Play spine 'die' track for visual feedback. Best-effort — if any
         // step fails we just skip to the modulate hide.

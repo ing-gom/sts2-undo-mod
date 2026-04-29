@@ -316,10 +316,44 @@ internal static class SnapshotRestorer
 
                 RestoreCardPiles(snap, pcs);
                 RestoreCardMutableState(snap);
+                LogHandLocalModifiers(pcs, "after restore");
             }
             ReflectionCache.PlayerGoldField?.SetValue(player, snap.Gold);
             break;
         }
+    }
+
+    /// <summary>
+    /// Diagnostic: dump each hand card's `_localModifiers` list size + cost,
+    /// so the log shows whether Pounce/Unrelenting-style local cost modifiers
+    /// survive capture+restore. Only emits a line when at least one hand card
+    /// has a non-empty modifier list (most plays don't apply local modifiers).
+    /// </summary>
+    private static void LogHandLocalModifiers(PlayerCombatState pcs, string label)
+    {
+        if (ReflectionCache.CardEnergyCostLocalModifiersField == null) return;
+        try
+        {
+            CardPile? hand = null;
+            foreach (var pile in pcs.AllPiles)
+                if (pile.Type == PileType.Hand) { hand = pile; break; }
+            if (hand == null) return;
+
+            var entries = new List<string>();
+            foreach (var card in hand.Cards)
+            {
+                var energyCost = ReflectionCache.CardEnergyCostProp?.GetValue(card);
+                if (energyCost == null) continue;
+                var mods = ReflectionCache.CardEnergyCostLocalModifiersField.GetValue(energyCost)
+                    as System.Collections.IList;
+                int n = mods?.Count ?? 0;
+                if (n == 0) continue;
+                entries.Add($"{card.Id.Entry}(mods={n})");
+            }
+            if (entries.Count > 0)
+                UndoLogger.Info($"[CardMods] hand {label}: [{string.Join(", ", entries)}]");
+        }
+        catch (Exception ex) { UndoLogger.Warn($"[CardMods] log {label}: {ex.Message}"); }
     }
 
     private static void RestoreCardPiles(CombatSnapshot snap, PlayerCombatState pcs)
@@ -2501,14 +2535,45 @@ internal static class SnapshotRestorer
             as System.Collections.IList;
         if (liveList == null) return;
 
-        // Strategy: keep live PowerModel refs where possible (so subscriptions
-        // stay valid), update fields to match snapshot, append/remove to fit count.
-        // Compare by Id.
+        // Strategy: full Hook-lifecycle resync. v0.0.4-attempt only Activated
+        // hooks for powers that were stripped from the live list, but the
+        // user-reported Unrelenting bug (다음 공격 0코스트 효과가 undo 후
+        // 살지 않음) revealed a third case: the game can keep the power in
+        // the `_powers` list at amount=0 while still calling DeactivateHooks
+        // — so by-Id lookup finds the power, our amount restore writes 1 back,
+        // but the underlying Hook subscription stays cold. Result: the cost
+        // modifier never fires on the next play.
+        //
+        // Resolution: always Deactivate every existing live power before
+        // touching state, restore state from snapshot, then Activate every
+        // power that ends up in the rebuilt list. Hook subscribers in
+        // STS2 use HookSubscribers collections that no-op on duplicate
+        // add and unhook-not-hooked, so the unconditional cycle is safe.
         var byId = new Dictionary<ModelId, PowerModel>();
         foreach (var item in liveList)
             if (item is PowerModel pm) byId[pm.Id] = pm;
 
+        // Phase 1: Deactivate hooks on EVERY live power (whether it's going to
+        // be retained, dropped, or replaced). Snapshot's powers may also need
+        // their Refs deactivated if they happen to still have stale subscriptions
+        // (e.g. game removed from _powers but didn't deactivate). Deactivate is
+        // idempotent — safe to call on a not-currently-subscribed instance.
+        int deactivated = 0;
+        foreach (var (_, livePower) in byId)
+            if (TryDeactivatePowerHooks(livePower)) deactivated++;
+        // Also deactivate any snapshot Refs whose live instance ISN'T in the
+        // current list — those refs were stripped from the creature but may
+        // still hold residual subscriptions (game's StripPowers may not have
+        // deactivated all hook bindings consistently across power types).
+        foreach (var s in saved.Powers)
+        {
+            if (s.Ref == null) continue;
+            if (byId.ContainsKey(s.Id)) continue;  // already handled above
+            if (TryDeactivatePowerHooks(s.Ref)) deactivated++;
+        }
+
         liveList.Clear();
+        var rebuilt = new List<PowerModel>();
         int reattached = 0;
         foreach (var snapPower in saved.Powers)
         {
@@ -2516,11 +2581,12 @@ internal static class SnapshotRestorer
             if (!byId.TryGetValue(snapPower.Id, out live))
             {
                 // Power doesn't exist live — most commonly because the
-                // creature died and the game stripped its `_powers` list.
-                // We held a strong ref at snapshot time; reattach the same
-                // PowerModel instance, restoring _owner via reflection (the
-                // public setter throws "cannot move power" once owner != null,
-                // and the game cleared owner=null when stripping).
+                // creature died and the game stripped its `_powers` list,
+                // OR the power's amount went to 0 and was removed. We held
+                // a strong ref at snapshot time; reattach the same instance
+                // by reflecting `_owner` (the public setter throws once
+                // owner != null and value differs — and the game cleared
+                // owner=null when stripping).
                 if (snapPower.Ref != null)
                 {
                     try
@@ -2562,17 +2628,70 @@ internal static class SnapshotRestorer
                 }
             }
             liveList.Add(live);
+            rebuilt.Add(live);
         }
-        if (reattached > 0)
-            UndoLogger.Info($"[Powers] reattached {reattached} stripped power(s) on revive of creature");
-        // Powers present live but not in snapshot are simply dropped (their slot
-        // is empty in the new list). Their NPower visual nodes get cleaned up by
-        // PowerRefresher.
+
+        // Phase 2: Activate hooks on every power now in the rebuilt list. Done
+        // after the list is fully repopulated so any internal "is in owner._powers"
+        // guard inside ActivateHooks sees the power as a current member.
+        int activated = 0;
+        foreach (var pm in rebuilt)
+            if (TryActivatePowerHooks(pm)) activated++;
+
+        if (deactivated > 0 || reattached > 0 || activated > 0)
+            UndoLogger.Info(
+                $"[Powers] hook lifecycle: deactivated={deactivated} reattached={reattached} activated={activated}");
+
+        // Player-creature only: emit a one-line summary of the resulting
+        // Powers list so log shows FreeSkillPower / FreeAttackPower / etc.
+        // state across snapshot/restore. Helps diagnose Pounce-style cost
+        // modifier bugs without parsing the full per-power dump.
+        if (creature.Side == CombatSide.Player)
+        {
+            var summary = new List<string>();
+            foreach (var item in liveList)
+                if (item is PowerModel pm)
+                {
+                    var amt = ReflectionCache.PowerAmountField.GetValue(pm);
+                    summary.Add($"{pm.Id.Entry}={amt}");
+                }
+            UndoLogger.Info($"[Powers] player after restore: [{string.Join(", ", summary)}]");
+        }
 
         // Notify amount-changed hooks so display refreshes.
         foreach (var item in liveList)
             if (item is PowerModel pm)
                 ReflectionCache.PowerInvokeAmountChangedMethod?.Invoke(pm, null);
+    }
+
+    private static bool TryActivatePowerHooks(PowerModel pm)
+    {
+        if (ReflectionCache.PowerActivateHooksMethod == null) return false;
+        try
+        {
+            ReflectionCache.PowerActivateHooksMethod.Invoke(pm, null);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            UndoLogger.Warn($"[Powers] ActivateHooks({pm.Id.Entry}) failed: {ex.Message}");
+            return false;
+        }
+    }
+
+    private static bool TryDeactivatePowerHooks(PowerModel pm)
+    {
+        if (ReflectionCache.PowerDeactivateHooksMethod == null) return false;
+        try
+        {
+            ReflectionCache.PowerDeactivateHooksMethod.Invoke(pm, null);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            UndoLogger.Warn($"[Powers] DeactivateHooks({pm.Id.Entry}) failed: {ex.Message}");
+            return false;
+        }
     }
 
     private static void RestoreRelics(CombatSnapshot snap, CombatState cs)
