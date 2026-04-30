@@ -63,6 +63,43 @@ internal static class CreatureVisualRefresher
                 $"live.IsDead={live.IsDead} hp={live.CurrentHp}/{live.MaxHp} " +
                 $"node={(node != null ? "exists" : "null")} inRemoving={inRemovingList}{visualsDiag}");
 
+            // Revive-power creatures (IllusionPower etc.): vanilla AnimDie runs
+            // unmodified for them and the power's own state machine drives the
+            // visual lifecycle. Skip body / spine / hue / overlay manipulation
+            // (fights with the power's visual). DO still run RefreshIntents
+            // and ResetTargetingState below — those are state resets on the
+            // NCreature itself, not body manipulation, and skipping them broke
+            // hover/click targeting after revive (reported 2026-04-30: "after
+            // revive can't target with attacks, undo issue").
+            bool isReviveLikeCreature = node != null
+                && Patches.AnimDiePatch.FindReviveLikePower(node) != null;
+            if (isReviveLikeCreature)
+            {
+                UndoLogger.Warn($"[CreatureVisual] id={saved.CombatId} has revive-like power — skipping body manipulation, keeping targeting reset");
+                if (wasAliveInSnap) revived++; // counted for log accounting
+            }
+
+            // Vanilla AnimDie may have already nulled out NCreatureVisuals._body
+            // / SpineBody on the zombie even though the NCreature shell is still
+            // discoverable. Without intervention every downstream step throws
+            // "Cannot access a disposed object". TryRestoreBodyFromSavedRef
+            // recovers from the VFX-reparent case; if both the live body and
+            // the saved ref are freed the body is genuinely unrecoverable and
+            // we skip the tail block to avoid the cascade of disposed-object
+            // exceptions.
+            bool zombieDegraded = node != null && Snapshot.SnapshotRestorer.IsZombieDegraded(node);
+            if (zombieDegraded && node != null)
+            {
+                UndoLogger.Warn($"[CreatureVisual] zombie degraded id={saved.CombatId} inRemoving={inRemovingList} — attempting body recovery via saved BodyRef");
+                try { Snapshot.SnapshotRestorer.TryRestoreBodyFromSavedRef(node, saved); }
+                catch (Exception ex) { UndoLogger.Warn($"[CreatureVisual] TryRestoreBodyFromSavedRef failed id={saved.CombatId}: {ex.Message}"); }
+                // Re-probe — recovery may have re-attached the body and lifted
+                // the degraded flag. If still degraded, all subsequent manipulation
+                // is unsafe so we skip the tail block (loop `continue` below).
+                zombieDegraded = Snapshot.SnapshotRestorer.IsZombieDegraded(node);
+                UndoLogger.Warn($"[CreatureVisual] post-recovery id={saved.CombatId} stillDegraded={zombieDegraded}");
+            }
+
             if (wasAliveInSnap)
             {
                 if (node == null)
@@ -73,13 +110,24 @@ internal static class CreatureVisualRefresher
                     node = FindNode(room, live);
                     if (node != null) try { node.StartReviveAnim(); } catch { }
                 }
+                else if (zombieDegraded)
+                {
+                    // Body recovery couldn't reattach. Falling back to in-place
+                    // StartReviveAnim — on a stripped shell it silently no-ops,
+                    // but at least we don't free anything else.
+                    revived++;
+                }
                 else if (inRemovingList)
                 {
-                    // Mid-death animation — pull it back via revive.
+                    // Mid-death animation, body still intact — pull back via revive.
                     try { node.StartReviveAnim(); revived++; } catch { }
                 }
                 else { aliveOk++; }
             }
+
+            // If body recovery failed, the manipulation block below is unsafe.
+            // Skip the rest of this loop iteration.
+            if (zombieDegraded) { continue; }
 
             // Body / spine / hue / overlay restoration applies regardless of
             // dead-or-alive snapshot. The captured VisualBodyModulate /
@@ -89,7 +137,10 @@ internal static class CreatureVisualRefresher
             // revive) it's the die-loop pose. Without applying these to the
             // dead-snap branch, undoing back to a corpse state on a creature
             // that was revived since leaves it visually alive.
-            if (node != null && saved.HadVisualNode)
+            //
+            // Skipped for revive-power creatures (IllusionPower etc.) — vanilla
+            // owns their visual lifecycle, our writes here would fight with it.
+            if (!isReviveLikeCreature && node != null && saved.HadVisualNode)
             {
                 if (wasAliveInSnap)
                 {
@@ -226,7 +277,16 @@ internal static class CreatureVisualRefresher
             // MouseFilter is wrong.
             if (!saved.IsDead && node != null)
             {
-                ResetTargetingState(node, saved.CombatId);
+                // Revive-power creatures (IllusionPower etc.): vanilla's
+                // AnimDie may have flipped Hitbox.MouseFilter to Ignore /
+                // FocusMode to None / Visible to false during the death anim
+                // and the power's revive doesn't fully restore them. Need the
+                // full hitbox restore + ToggleIsInteractable, not just
+                // IsFocused — otherwise after revive + undo the player can't
+                // target the creature with a single-target attack.
+                // Reported 2026-04-30: "after revive can't target with attacks
+                // — undo issue".
+                ResetTargetingState(node, saved.CombatId, fullRestore: isReviveLikeCreature);
             }
         }
 
@@ -245,6 +305,23 @@ internal static class CreatureVisualRefresher
             if (creature == null) continue;
             var node = room.GetCreatureNode(creature);
             if (node == null) continue;
+
+            // Revive-power creatures (IllusionPower etc.): vanilla drives its own
+            // AnimateOut/AnimateIn lifecycle. Two failure modes seen during the
+            // 2026-04-30 testing pass:
+            //   - Force-write Visible/Modulate based on snap.IsDead → fought
+            //     vanilla mid-animation, made HP bar inconsistent during normal
+            //     gameplay (sometimes hidden after revive, sometimes shown).
+            //   - Skip force entirely (values-only RefreshValues) → undo to
+            //     alive snapshot left HP bar hidden (vanilla's AnimateOut state
+            //     persisted across the undo).
+            // Compromise: force VISIBLE only when snap.IsDead==false (caller
+            // intent: "should be alive now"). Skip the force-hide branch — let
+            // vanilla's AnimateOut keep playing if it's mid-animation, or stay
+            // hidden if already done. This restores HP bar after undo without
+            // ramming into vanilla's mid-death animation.
+            bool isReviveLike = Patches.AnimDiePatch.FindReviveLikePower(node) != null;
+
             foreach (var n in WalkTree(node))
             {
                 if (n is not NCreatureStateDisplay sd) continue;
@@ -264,13 +341,18 @@ internal static class CreatureVisualRefresher
                     {
                         sd.Visible = true;
                         mod.A = 1f;
+                        sd.Modulate = mod;
                     }
-                    else
+                    else if (!isReviveLike)
                     {
                         sd.Visible = false;
                         mod.A = 0f;
+                        sd.Modulate = mod;
                     }
-                    sd.Modulate = mod;
+                    // (Revive-like + dead-in-snap: skip force-hide — vanilla
+                    //  owns the AnimateOut tween. Force-writing here would snap
+                    //  to A=0 mid-tween and create the inconsistent gameplay
+                    //  HP-bar behavior the user reported.)
 
                     ReflectionCache.NCreatureStateDisplayRefreshValuesMethod?.Invoke(sd, null);
                     refreshed++;
@@ -299,8 +381,14 @@ internal static class CreatureVisualRefresher
     /// turned out to be unnecessary (hitbox was already correct in probe.log
     /// diagnostics) and the OnUnfocus call mutated NTargetManager.HoveredNode
     /// global state, causing stuck nameplates on other enemies.
+    ///
+    /// <paramref name="fullRestore"/> = true: also restore Hitbox state +
+    /// ToggleIsInteractable. Needed for revive-power creatures (IllusionPower
+    /// etc.) where vanilla's death+revive flow leaves the hitbox in a non-
+    /// targetable state. Mirrors DeathAnimDelayPatch.CollectAndReset's
+    /// alive-creature path (the same fix applied for TestSubject phase-2).
     /// </summary>
-    private static void ResetTargetingState(NCreature node, uint combatId)
+    private static void ResetTargetingState(NCreature node, uint combatId, bool fullRestore = false)
     {
         try
         {
@@ -317,6 +405,40 @@ internal static class CreatureVisualRefresher
             }
             if (!resetSomething)
                 UndoLogger.Warn("[Targeting] could not find IsFocused backing field on NCreature");
+
+            if (fullRestore)
+            {
+                // Hitbox state — vanilla AnimDie may have flipped MouseFilter to
+                // Ignore / FocusMode to None during the death anim and not
+                // restored them after revive. Without these the next hover
+                // skips NTargetManager.OnNodeHovered.
+                try
+                {
+                    if (node.Hitbox != null)
+                    {
+                        var prevMf = node.Hitbox.MouseFilter;
+                        var prevFm = node.Hitbox.FocusMode;
+                        var prevVis = node.Hitbox.Visible;
+                        node.Hitbox.MouseFilter = Godot.Control.MouseFilterEnum.Stop;
+                        node.Hitbox.FocusMode = Godot.Control.FocusModeEnum.All;
+                        node.Hitbox.Visible = true;
+                        if (prevMf != Godot.Control.MouseFilterEnum.Stop
+                            || prevFm != Godot.Control.FocusModeEnum.All
+                            || !prevVis)
+                        {
+                            UndoLogger.Warn($"[Targeting] hitbox restore id={combatId} mf {prevMf}->Stop fm {prevFm}->All vis {prevVis}->True");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                { UndoLogger.Warn($"[Targeting] hitbox restore failed id={combatId}: {ex.Message}"); }
+
+                // Belt-and-braces — same call DeathAnimDelayPatch uses for the
+                // post-phase-transition alive sweep.
+                try { node.ToggleIsInteractable(true); }
+                catch (Exception ex)
+                { UndoLogger.Warn($"[Targeting] ToggleIsInteractable failed id={combatId}: {ex.Message}"); }
+            }
         }
         catch (Exception ex) { UndoLogger.Warn($"[Targeting] reset failed id={combatId}: {ex.Message}"); }
     }

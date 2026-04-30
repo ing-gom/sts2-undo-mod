@@ -950,7 +950,7 @@ internal static class SnapshotRestorer
     /// re-attach. This handles the late-Z case where user pressed Z after the
     /// die anim ran the body-free step.
     /// </summary>
-    private static void TryRestoreBodyFromSavedRef(
+    internal static void TryRestoreBodyFromSavedRef(
         MegaCrit.Sts2.Core.Nodes.Combat.NCreature node, CreatureSnapshot saved)
     {
         try
@@ -1466,7 +1466,7 @@ internal static class SnapshotRestorer
     /// MegaSprite (SpineBody) is also checked — IsInstanceValid catches the
     /// case where the field still holds a stale reference to a freed Node.
     /// </summary>
-    private static bool IsZombieDegraded(MegaCrit.Sts2.Core.Nodes.Combat.NCreature node)
+    internal static bool IsZombieDegraded(MegaCrit.Sts2.Core.Nodes.Combat.NCreature node)
     {
         try
         {
@@ -1647,7 +1647,7 @@ internal static class SnapshotRestorer
     /// (signals mid-emit), we fall back to detaching + QueueFree so at minimum
     /// the zombie won't be reused by `room.AddCreature`'s lookup.
     /// </summary>
-    private static void DestroyZombieNCreatures(
+    internal static void DestroyZombieNCreatures(
         MegaCrit.Sts2.Core.Nodes.Rooms.NCombatRoom room,
         Creature creature,
         uint combatId)

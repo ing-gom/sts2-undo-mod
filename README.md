@@ -43,6 +43,9 @@ This is a **snapshot approach**, not a command/inverse-op approach — picking t
 | `Shift+Z` | Undo to the start of the current turn |
 
 You can also click the `↶ Z` button that appears near the energy display.
+**Right-click and drag** the button to move it; the position is saved to
+`%APPDATA%\Sts2UndoMod\settings.json` (Windows) and applied on the next
+combat. Delete that file to reset the position to default.
 
 ## Installation
 

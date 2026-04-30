@@ -152,6 +152,32 @@ public static class AnimDiePatch
         "TestSubject", // 실험체 — phase-1 → phase-2 transition; reported 2026-04-29
     };
 
+    /// <summary>
+    /// Power class-name substrings that indicate the creature has revive-on-death
+    /// or prevent-death behavior. Vanilla AnimDie cooperates with these powers'
+    /// AfterDeath / AfterPreventingDeath hooks; our replacement's NCreature detach
+    /// breaks the revive path because the game's own revive logic can't find the
+    /// detached node. Reported symptom: a minion with a "revives every turn on
+    /// death" power dies, but the visual never reappears and combat hangs (the
+    /// game is waiting on the revive animation we prevented).
+    ///
+    /// Matched as a substring against each power's `GetType().Name` (no namespace).
+    /// Covers known production + beta-build power classes:
+    ///   - IllusionPower (환상) — AfterDeath + ReviveMove. Reported 2026-04-30:
+    ///     a minion with this power was dying + disappearing despite the earlier
+    ///     Mock-only substring set; production power name simply doesn't follow
+    ///     the obvious "Revive*" naming.
+    ///   - MockRevivePower (AfterPreventingDeath)
+    ///   - MockPreventDeathPower (AfterPreventingDeath)
+    ///   - MockInvincibleOnDeathPower (AfterDeath)
+    /// Also matches anything containing "Revive", "Reborn", "Reincarn" should
+    /// future power names follow the obvious convention.
+    /// </summary>
+    private static readonly string[] ReviveLikePowerNameSubstrings =
+    {
+        "Revive", "Reborn", "Reincarn", "PreventDeath", "InvincibleOnDeath", "Illusion",
+    };
+
     [HarmonyPrefix]
     public static bool Prefix(NCreature __instance, bool __0, ref System.Threading.Tasks.Task __result)
     {
@@ -181,6 +207,55 @@ public static class AnimDiePatch
                 return true; // run original
             }
 
+            // Creatures with revive-on-death / prevent-death powers can't take
+            // either of the two simple paths:
+            //   - Pass through to vanilla AnimDie → vanilla frees the body
+            //     Node2D unconditionally. The power's revive hook fires but
+            //     there's no body to put back; the freed Godot Node leaves a
+            //     stripped shell that won't render. After undo, our snapshot's
+            //     BodyRef is also IsInstanceValid=false because Free() destroys
+            //     the underlying Godot object regardless of C#-side strong refs.
+            //     User report: "with the fix the body completely disappears".
+            //   - Run our standard replacement → the Phase-2 detach removes
+            //     NCreature from the tree, and the power's revive hook can't
+            //     find the node it expected to revive on. Combat freezes.
+            //     User report: "minion doesn't revive, game stops progressing".
+            //
+            // Compromise: run the replacement spine-'die' visual but SKIP the
+            // detach + DeathVfx steps. Body stays alive in the tree, NCreature
+            // stays attached, vanilla's AfterDeath / AfterPreventingDeath hook
+            // fires on a fully reachable node. The death anim is just a visual
+            // tell; the revive overrides it almost immediately.
+            var reviveLikePower = FindReviveLikePower(__instance);
+            // Diagnostic: dump what the entity actually has so we can see why
+            // a "revive minion" isn't matching our substring set (production
+            // power names may differ from the Mock-prefixed beta names).
+            string powerListDump = DumpPowerNames(__instance);
+            UndoLogger.Warn($"[AnimDie] death intercept instId={__instance.GetInstanceId()} monster={monsterTypeName ?? "?"} powers=[{powerListDump}] reviveMatch='{reviveLikePower ?? "<none>"}'");
+
+            if (reviveLikePower != null)
+            {
+                // Multiple replacement strategies have been tried for revive-power
+                // creatures (IllusionPower in particular):
+                //   - Replace AnimDie + detach NCreature → vanilla's revive
+                //     hooks couldn't find the orphan node → game froze.
+                //   - Replace AnimDie + spine 'die' but no detach → conflicted
+                //     with the power's own visual; user reported "wrong-looking
+                //     visual".
+                //   - Replace AnimDie + return immediately → still wrong because
+                //     vanilla's AnimDie cooperates with the power state machine
+                //     (e.g. spine pose, hitbox flag transitions) that we skipped.
+                //
+                // Final approach: pass through to vanilla AnimDie. The power's
+                // built-in revive flow handles body lifecycle — this matches the
+                // user's expected "minion stays visible, HP bar refreshes" visual.
+                // Trade-off: undo across the death of these creatures isn't fully
+                // supported (CreatureVisualRefresher will skip them — see the
+                // matching guard there); same caveat as TestSubject.
+                UndoLogger.Warn($"[AnimDie] creature has revive-like power '{reviveLikePower}' instId={__instance.GetInstanceId()} monster={monsterTypeName ?? "?"} — passing through to vanilla AnimDie (revive-power path)");
+                return true; // run original; vanilla owns the death+revive flow
+            }
+
             __result = RunReplacementDeathAnim(__instance, __0);
             return false; // skip original AnimDie — never frees body
         }
@@ -205,6 +280,62 @@ public static class AnimDiePatch
             return monster?.GetType().Name;
         }
         catch { return null; }
+    }
+
+    /// <summary>
+    /// Scan the creature's active powers for any whose class name matches a
+    /// revive-on-death / prevent-death pattern. Returns the matching power's
+    /// type name (for logging) or null if none. Called from AnimDie's prefix
+    /// to decide whether to pass through to vanilla — these powers cooperate
+    /// with vanilla's revive flow, which our detach breaks.
+    ///
+    /// Note on timing: AnimDie is invoked once IsDead==true but BEFORE the
+    /// power list is stripped. The Powers enumerable is therefore still
+    /// populated here, even though it gets cleared later in the death flow.
+    /// </summary>
+    internal static string? FindReviveLikePower(NCreature creature)
+    {
+        try
+        {
+            var entity = creature?.Entity;
+            if (entity == null) return null;
+            foreach (var pm in entity.Powers)
+            {
+                if (pm == null) continue;
+                var name = pm.GetType().Name;
+                foreach (var sub in ReviveLikePowerNameSubstrings)
+                {
+                    if (name.IndexOf(sub, StringComparison.Ordinal) >= 0) return name;
+                }
+            }
+            return null;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
+    /// Dump every power's class name + Id.Entry for diagnostic logging.
+    /// Helps identify what a misbehaving "revive minion" actually has on it
+    /// when our substring match fails.
+    /// </summary>
+    private static string DumpPowerNames(NCreature creature)
+    {
+        try
+        {
+            var entity = creature?.Entity;
+            if (entity == null) return "<no entity>";
+            var parts = new List<string>();
+            foreach (var pm in entity.Powers)
+            {
+                if (pm == null) { parts.Add("<null>"); continue; }
+                string idEntry = "";
+                try { idEntry = pm.Id.Entry ?? ""; } catch { }
+                parts.Add($"{pm.GetType().Name}[{idEntry}]");
+            }
+            if (parts.Count == 0) return "<empty>";
+            return string.Join(", ", parts);
+        }
+        catch (Exception ex) { return $"<dump-err:{ex.GetType().Name}>"; }
     }
 
     /// <summary>
@@ -234,14 +365,14 @@ public static class AnimDiePatch
     }
 
     private static async System.Threading.Tasks.Task RunReplacementDeathAnim(
-        NCreature creature, bool argZero)
+        NCreature creature, bool argZero, bool skipDetach = false)
     {
         if (creature == null || !GodotObject.IsInstanceValid(creature)) return;
 
         InFlightCount++;
         try
         {
-            await RunReplacementDeathAnimInner(creature, argZero);
+            await RunReplacementDeathAnimInner(creature, argZero, skipDetach);
         }
         finally
         {
@@ -250,9 +381,24 @@ public static class AnimDiePatch
     }
 
     private static async System.Threading.Tasks.Task RunReplacementDeathAnimInner(
-        NCreature creature, bool argZero)
+        NCreature creature, bool argZero, bool skipDetach)
     {
-        UndoLogger.Info($"[AnimDie] replacement starting on instId={creature.GetInstanceId()} monster={GetMonsterTypeName(creature) ?? "?"} arg={argZero}");
+        UndoLogger.Info($"[AnimDie] replacement starting on instId={creature.GetInstanceId()} monster={GetMonsterTypeName(creature) ?? "?"} arg={argZero} skipDetach={skipDetach}");
+
+        // Revive-power creatures (e.g. IllusionPower): the power's own state
+        // machine (AfterDeath / ReviveMove for IllusionPower) drives the
+        // visual transition. Anything we play on top — spine 'die', body
+        // tween, DeathFadeVfx — fights with that and produces a visual that
+        // doesn't match vanilla. Reported 2026-04-30: "doesn't disappear, but
+        // the visual behaves differently from the original game environment".
+        // Minimum-intervention path: AnimDie returns immediately, body stays
+        // intact, NCreature stays attached, the power runs its own revive.
+        if (skipDetach)
+        {
+            UndoLogger.Info($"[AnimDie] replacement complete (revive-power path) on instId={creature.GetInstanceId()} — no spine 'die', no detach, no DeathVfx");
+            await System.Threading.Tasks.Task.CompletedTask;
+            return;
+        }
 
         // Play spine 'die' track for visual feedback. Best-effort — if any
         // step fails we just skip to the modulate hide.

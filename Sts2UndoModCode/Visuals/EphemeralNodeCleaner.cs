@@ -40,12 +40,19 @@ internal static class EphemeralNodeCleaner
 
             // Skip anything with a structural-sounding name (heuristic: avoids
             // nuking legitimate UI children added by game during normal flow).
+            // "CardPlay": NMouseCardPlay / NCardPlayQueue carry input state
+            // (NPlayerHand._currentCardPlay refers to the live NMouseCardPlay).
+            // Freeing NMouseCardPlay leaves a disposed Godot wrapper in
+            // _currentCardPlay; the next click is briefly lost while the
+            // game lazily recreates it — observable as "Z 연타 후 카드를
+            // 잠시 못 잡음".
             var typeName = n.GetType().Name;
             if (typeName.StartsWith("N") && (
                 typeName.Contains("Holder") || typeName.Contains("Pile")
                 || typeName.Contains("Container") || typeName.Contains("Display")
                 || typeName.Contains("Bar") || typeName.Contains("Button")
-                || typeName.Contains("Ui") || typeName.Contains("Panel")))
+                || typeName.Contains("Ui") || typeName.Contains("Panel")
+                || typeName.Contains("CardPlay")))
                 continue;
 
             toFree.Add(n);

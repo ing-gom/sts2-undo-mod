@@ -57,6 +57,21 @@ internal static class EndTurnStateRefresher
         // Manual field-reset was leaving subtle desync after Z-spam.
         var currentPlayField = ReflectionCache.HandCurrentCardPlayField;
         var currentPlay = currentPlayField?.GetValue(hand);
+
+        // If the Godot side has been freed (by an older EphemeralNodeCleaner
+        // pass, or any future cleanup that catches it) the C# wrapper stays
+        // non-null but IsInstanceValid is false. Calling CancelPlayCard on a
+        // disposed instance throws or silently no-ops, leaving the field still
+        // pointing at the zombie. The next "start a drag" check sees a non-null
+        // _currentCardPlay and is briefly ignored. Null it explicitly so the
+        // game can lazily recreate NMouseCardPlay on the next click.
+        if (currentPlay is GodotObject zombieGo && !GodotObject.IsInstanceValid(zombieGo))
+        {
+            try { currentPlayField?.SetValue(hand, null); }
+            catch (Exception ex) { UndoLogger.Warn($"[EndTurn] null disposed _currentCardPlay failed: {ex.Message}"); }
+            currentPlay = null;
+        }
+
         if (currentPlay != null)
         {
             // Kill any active tween first so CancelPlayCard doesn't wait on it.

@@ -62,6 +62,17 @@ public static class DeathAnimDelayPatch
                 return true; // run original synchronously
             }
 
+            // Revive-power creatures pass through to vanilla AnimDie (see
+            // AnimDiePatch.Prefix). Vanilla's StartDeathAnim → AnimDie chain
+            // expects synchronous timing — the 0.2s defer would desync the
+            // power state machine (IllusionPower's <ReviveMove>) from the
+            // death visuals. Run vanilla immediately, no defer.
+            if (HasReviveLikePower(__instance) is { } powerName)
+            {
+                UndoLogger.Warn($"[DeathDefer] creature has revive-like power '{powerName}' instId={__instance.GetInstanceId()} — running vanilla StartDeathAnim immediately");
+                return true; // run original synchronously
+            }
+
             ulong id = __instance.GetInstanceId();
             // If this creature already has a pending defer, drop the new call —
             // game shouldn't double-trigger StartDeathAnim, but if it does we
@@ -204,6 +215,34 @@ public static class DeathAnimDelayPatch
         {
             var monster = creature?.Entity?.Monster;
             return monster?.GetType().Name;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
+    /// True if any of this creature's powers has a class name matching the
+    /// revive-like substring set (Revive / Reborn / Reincarn / PreventDeath /
+    /// InvincibleOnDeath). Returns the matching name for logging, or null.
+    /// </summary>
+    private static readonly string[] _reviveLikeSubstrings =
+        { "Revive", "Reborn", "Reincarn", "PreventDeath", "InvincibleOnDeath", "Illusion" };
+
+    private static string? HasReviveLikePower(NCreature creature)
+    {
+        try
+        {
+            var entity = creature?.Entity;
+            if (entity == null) return null;
+            foreach (var pm in entity.Powers)
+            {
+                if (pm == null) continue;
+                var name = pm.GetType().Name;
+                foreach (var sub in _reviveLikeSubstrings)
+                {
+                    if (name.IndexOf(sub, StringComparison.Ordinal) >= 0) return name;
+                }
+            }
+            return null;
         }
         catch { return null; }
     }
