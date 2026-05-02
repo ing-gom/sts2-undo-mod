@@ -150,6 +150,7 @@ public static class AnimDiePatch
     public static readonly HashSet<string> SkipReplacementMonsterTypes = new()
     {
         "TestSubject", // 실험체 — phase-1 → phase-2 transition; reported 2026-04-29
+        "TheObscura",  // HIVE 보스 — 페이즈/소환 로직과 충돌해 전투 freeze; reported 2026-05-02 (seed GP9B545ZGP)
     };
 
     /// <summary>

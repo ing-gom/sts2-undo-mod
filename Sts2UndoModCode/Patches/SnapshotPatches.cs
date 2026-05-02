@@ -58,6 +58,24 @@ public static class SnapshotPatches
 
     public static void SnapshotPrefix(MethodBase __originalMethod)
     {
+        // RMB-window suppression: STS2 v0.104.0+ beta reportedly constructs
+        // synthetic action instances (e.g. PlayCardAction) to compute the
+        // right-click upgrade preview. Each construction would otherwise
+        // trigger a full deep-clone capture; on slower machines the resulting
+        // stall makes the preview never appear AND the right-click never
+        // dismiss (input feels locked).
+        //
+        // Real player actions are driven by LMB drag/click; RMB is reserved
+        // for preview/inspect. Skipping capture while RMB is held (or freshly
+        // released) eliminates the storm without affecting any real card play
+        // path. The grace window catches deferred preview callbacks that fire
+        // a tick after the click.
+        if (PatchNGameInput.IsInRmbWindow())
+        {
+            UndoLogger.Info($"[Snapshot] skipped (RMB preview window) — ctor: {__originalMethod.DeclaringType?.Name}.ctor({string.Join(", ", __originalMethod.GetParameters().Select(p => p.ParameterType.Name))})");
+            return;
+        }
+
         UndoController.TakeSnapshot();
         // Trigger log removed from hot path — was firing on every card play
         // and caused disk-I/O frame stutter. Snapshot/restore lifecycle is
