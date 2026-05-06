@@ -327,6 +327,22 @@ internal static class CreatureVisualRefresher
                 if (n is not NCreatureStateDisplay sd) continue;
                 try
                 {
+                    // AnimateOut sequence (vanilla NCreatureStateDisplay.AnimateOut):
+                    //   1. Tween Modulate.A → 0 (Sine, ~0.5s)
+                    //   2. Tween Position → Position - _healthBarAnimOffset (Quad, ~0.25s)
+                    //   3. TweenCallback: Visible = false
+                    // If undo fires while any of these are still running, our
+                    // force-show below gets clobbered: the modulate tween keeps
+                    // lerping toward 0, the callback re-fires Visible=false a
+                    // tick later, or the position tween leaves the bar offset
+                    // off-screen. Reported 2026-05-02 (seed Y50J2MGVWX3) —
+                    // TestSubject HP bar invisible after undo across phase-1
+                    // death. Save/load fixed it (fresh tree, no live tween).
+                    // Kill _showHideTween + _hoverTween BEFORE writing visibility
+                    // to settle the race deterministically.
+                    KillStateDisplayTween(sd, ReflectionCache.NCreatureStateDisplayShowHideTweenField);
+                    KillStateDisplayTween(sd, ReflectionCache.NCreatureStateDisplayHoverTweenField);
+
                     // NCreatureStateDisplay.AnimateOut runs on death, leaving the
                     // node Visible=false and Modulate.A=0. The HP bar (NHealthBar)
                     // is its child — when restoring an ALIVE snapshot, we need
@@ -342,6 +358,14 @@ internal static class CreatureVisualRefresher
                         sd.Visible = true;
                         mod.A = 1f;
                         sd.Modulate = mod;
+                        // Reset Position to the captured _originalPosition so the
+                        // bar isn't left offset by AnimateOut's _healthBarAnimOffset
+                        // shift. Snap, don't tween — undo wants instant restore.
+                        if (ReflectionCache.NCreatureStateDisplayOriginalPositionField?.GetValue(sd)
+                            is Godot.Vector2 origPos)
+                        {
+                            sd.Position = origPos;
+                        }
                     }
                     else if (!isReviveLike)
                     {
@@ -733,6 +757,28 @@ internal static class CreatureVisualRefresher
         catch (Exception ex) { UndoLogger.Warn($"[CreatureVisual] body reset failed: {ex.Message}"); }
 
         UndoLogger.Info($"[CreatureVisual] hurt-anim cleanup: wasPlaying={wasPlaying} stoppedAnims={stoppedAnims}");
+    }
+
+    /// <summary>
+    /// Read a Tween out of an `NCreatureStateDisplay` field via reflection
+    /// and Kill() it if still valid. Used to abort a mid-flight AnimateOut
+    /// (or AnimateIn) before our snapshot restore force-writes Visible /
+    /// Modulate / Position — without the kill, the tween keeps lerping and
+    /// the trailing TweenCallback re-hides the bar a tick later.
+    /// </summary>
+    private static void KillStateDisplayTween(NCreatureStateDisplay sd, System.Reflection.FieldInfo? field)
+    {
+        if (field == null) return;
+        try
+        {
+            if (field.GetValue(sd) is Godot.Tween tw
+                && Godot.GodotObject.IsInstanceValid(tw)
+                && tw.IsValid())
+            {
+                tw.Kill();
+            }
+        }
+        catch { /* best-effort — tween may already be disposed */ }
     }
 
     private static IEnumerable<Godot.Node> WalkTree(Godot.Node root)

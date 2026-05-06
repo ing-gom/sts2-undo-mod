@@ -587,6 +587,20 @@ internal static class ReflectionCache
     public static readonly MethodInfo? NCreatureStateDisplayRefreshValuesMethod =
         AccessTools.Method(typeof(NCreatureStateDisplay), "RefreshValues");
 
+    // AnimateOut tween references + the captured original position. AnimateOut
+    // tweens Modulate.A → 0 then chains a TweenCallback that sets Visible=false;
+    // it also tweens Position to (Position - _healthBarAnimOffset). On undo we
+    // force-show (Visible=true, A=1f), but if these tweens are still in flight
+    // they keep lerping toward 0 and the callback re-hides — TestSubject HP-bar
+    // invisible bug (Y50J2MGVWX3, 2026-05-02). Kill both tweens and snap
+    // Position back to _originalPosition before the force-show.
+    public static readonly FieldInfo? NCreatureStateDisplayShowHideTweenField =
+        AccessTools.Field(typeof(NCreatureStateDisplay), "_showHideTween");
+    public static readonly FieldInfo? NCreatureStateDisplayHoverTweenField =
+        AccessTools.Field(typeof(NCreatureStateDisplay), "_hoverTween");
+    public static readonly FieldInfo? NCreatureStateDisplayOriginalPositionField =
+        AccessTools.Field(typeof(NCreatureStateDisplay), "_originalPosition");
+
     // NPowerContainer rebuild
     public static readonly FieldInfo? NCreatureStateDisplayPowerContainerField =
         AccessTools.Field(typeof(NCreatureStateDisplay), "_powerContainer");

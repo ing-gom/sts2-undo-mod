@@ -154,6 +154,32 @@ public static class AnimDiePatch
     };
 
     /// <summary>
+    /// Monster type names whose `die` spine animation has a long "lying dead"
+    /// tail we trim. Replacement still runs (so undo-across-death keeps working
+    /// via NCreature detach + DetachedZombies registry), but the spine wait
+    /// before triggering DeathFadeVfx + detach is capped at
+    /// <see cref="SpineDieCapSeconds"/>. The cinder dissolve (2.5s) still plays
+    /// out in the subviewport — players see the death effect, just not a
+    /// full-length pre-dissolve "collapse" pose.
+    ///
+    /// Reported 2026-05-02: small enemies' corpses linger 1–2s before vanishing.
+    /// Toadpole's `die`/`die_buffed` spine has a settle phase at the tail; the
+    /// cap removes that without affecting larger enemies (Centipede's segment
+    /// closure depends on the full duration and stays uncapped).
+    ///
+    /// Matched against `monster.GetType().Name` (no namespace).
+    /// </summary>
+    public static readonly HashSet<string> SpineDieCappedMonsterTypes = new()
+    {
+        "Toadpole",  // 올챙이 — spine die tail trim; reported 2026-05-02
+    };
+
+    /// <summary>Wait cap for capped monster types. Values <0.5s start to
+    /// noticeably skip the early "impact" frames of die spine; 0.5s preserves
+    /// the killing-blow impact pose without lingering on the dead-body tail.</summary>
+    public const float SpineDieCapSeconds = 0.5f;
+
+    /// <summary>
     /// Power class-name substrings that indicate the creature has revive-on-death
     /// or prevent-death behavior. Vanilla AnimDie cooperates with these powers'
     /// AfterDeath / AfterPreventingDeath hooks; our replacement's NCreature detach
@@ -405,11 +431,22 @@ public static class AnimDiePatch
         // step fails we just skip to the modulate hide.
         float dieDuration = TryPlaySpineDie(creature);
 
-        // Phase 1: wait for the FULL spine 'die' anim to play out — the user
-        // wants the "쓰러지고 (collapse)" pose to be visible end-to-end. No
-        // cap; long-anim monsters (3-segment centipede etc.) get their full
-        // closure.
+        // Phase 1: wait for the spine 'die' anim to play. By default we wait the
+        // full duration so the "쓰러지고 (collapse)" pose is visible end-to-end —
+        // long-anim monsters (3-segment Centipede etc.) need this for closure.
+        // For monsters on `SpineDieCappedMonsterTypes` (Toadpole etc.) the wait
+        // is capped — their spine die has a long lying-dead tail that just
+        // delays the cinder dissolve from starting, which is what the corpse-
+        // lingers-1–2s reports actually complain about.
         float spineWait = dieDuration > 0f ? dieDuration : DieVisibleFallbackSeconds;
+        var monsterTypeNameForCap = GetMonsterTypeName(creature);
+        if (monsterTypeNameForCap != null
+            && SpineDieCappedMonsterTypes.Contains(monsterTypeNameForCap)
+            && spineWait > SpineDieCapSeconds)
+        {
+            UndoLogger.Info($"[AnimDie] spine wait capped {spineWait:F2}s → {SpineDieCapSeconds:F2}s for monster={monsterTypeNameForCap}");
+            spineWait = SpineDieCapSeconds;
+        }
         try
         {
             var tree = creature.GetTree();
