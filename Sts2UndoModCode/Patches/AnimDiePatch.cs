@@ -194,6 +194,15 @@ public static class AnimDiePatch
     ///     a minion with this power was dying + disappearing despite the earlier
     ///     Mock-only substring set; production power name simply doesn't follow
     ///     the obvious "Revive*" naming.
+    ///   - DieForYouPower (Necrobinder Osty pet "골골이") — AfterDeath revive at
+    ///     1 HP next turn. Reported 2026-05-07: Osty dies, vanilla revives it at
+    ///     1 HP, but our detach left no NCreatureView for the revived model →
+    ///     instantly re-dies as the queued DeathFadeVfx finishes on the now-
+    ///     resurrected instance. Also keeps StartDeathAnim synchronous via
+    ///     DeathAnimDelayPatch._reviveLikeSubstrings (keep both lists in sync).
+    ///     Note: DieForYou's revive is INSTANT (HP=1 set, no live anim), so it's
+    ///     intentionally excluded from <see cref="LiveReviveAnimPowerNameSubstrings"/>
+    ///     — undo CAN safely restore body Modulate/spine/hue for Osty.
     ///   - MockRevivePower (AfterPreventingDeath)
     ///   - MockPreventDeathPower (AfterPreventingDeath)
     ///   - MockInvincibleOnDeathPower (AfterDeath)
@@ -201,6 +210,30 @@ public static class AnimDiePatch
     /// future power names follow the obvious convention.
     /// </summary>
     private static readonly string[] ReviveLikePowerNameSubstrings =
+    {
+        "Revive", "Reborn", "Reincarn", "PreventDeath", "InvincibleOnDeath", "Illusion", "DieForYou",
+    };
+
+    /// <summary>
+    /// Subset of <see cref="ReviveLikePowerNameSubstrings"/> for powers whose
+    /// vanilla revive runs a LIVE animation that fights with our undo's body
+    /// manipulation. <c>CreatureVisualRefresher</c> uses this narrower set to
+    /// decide whether to skip body Modulate/spine/hue restoration on undo.
+    ///
+    /// IllusionPower's revive is animated (ReviveMove drives the visual
+    /// transition over multiple frames) — force-writing Modulate/spine/hue
+    /// mid-anim gets clobbered by the still-running tween. DieForYouPower
+    /// (Osty) revives instantly at the start of next turn (HP=1 set, no live
+    /// revive anim), so undoing can safely restore body state without fighting
+    /// any tween — that's why it's in <see cref="ReviveLikePowerNameSubstrings"/>
+    /// (so AnimDie/StartDeathAnim get delegated to vanilla) but NOT here (so
+    /// undo's body restore still runs). Reported 2026-05-08.
+    ///
+    /// Mock* power classes go in here too (Revive/PreventDeath/InvincibleOnDeath
+    /// substrings) since their AfterDeath / AfterPreventingDeath hooks may
+    /// drive live anim on the recovered creature.
+    /// </summary>
+    private static readonly string[] LiveReviveAnimPowerNameSubstrings =
     {
         "Revive", "Reborn", "Reincarn", "PreventDeath", "InvincibleOnDeath", "Illusion",
     };
@@ -321,6 +354,18 @@ public static class AnimDiePatch
     /// populated here, even though it gets cleared later in the death flow.
     /// </summary>
     internal static string? FindReviveLikePower(NCreature creature)
+        => FindMatchingPower(creature, ReviveLikePowerNameSubstrings);
+
+    /// <summary>
+    /// Like <see cref="FindReviveLikePower"/> but matches only powers with a
+    /// LIVE revive animation (excludes instant-revive powers like DieForYou).
+    /// Used by <c>CreatureVisualRefresher</c> to skip body manipulation only
+    /// when there's a live anim to fight with.
+    /// </summary>
+    internal static string? FindLiveReviveAnimPower(NCreature creature)
+        => FindMatchingPower(creature, LiveReviveAnimPowerNameSubstrings);
+
+    private static string? FindMatchingPower(NCreature creature, string[] substrings)
     {
         try
         {
@@ -330,7 +375,7 @@ public static class AnimDiePatch
             {
                 if (pm == null) continue;
                 var name = pm.GetType().Name;
-                foreach (var sub in ReviveLikePowerNameSubstrings)
+                foreach (var sub in substrings)
                 {
                     if (name.IndexOf(sub, StringComparison.Ordinal) >= 0) return name;
                 }

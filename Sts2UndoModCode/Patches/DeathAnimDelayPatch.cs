@@ -224,8 +224,15 @@ public static class DeathAnimDelayPatch
     /// revive-like substring set (Revive / Reborn / Reincarn / PreventDeath /
     /// InvincibleOnDeath). Returns the matching name for logging, or null.
     /// </summary>
+    // Keep in sync with AnimDiePatch.ReviveLikePowerNameSubstrings — both gates
+    // need to agree, otherwise vanilla's StartDeathAnim → AnimDie chain ends up
+    // with one half deferred (0.2s timer here) and the other half synchronous
+    // (vanilla AnimDie via AnimDiePatch pass-through), which desyncs the power
+    // state machine from the death visuals. Reported 2026-05-08 for Osty:
+    // idle anim kept playing during the dying-pre-revive window because this
+    // list missed "DieForYou".
     private static readonly string[] _reviveLikeSubstrings =
-        { "Revive", "Reborn", "Reincarn", "PreventDeath", "InvincibleOnDeath", "Illusion" };
+        { "Revive", "Reborn", "Reincarn", "PreventDeath", "InvincibleOnDeath", "Illusion", "DieForYou" };
 
     private static string? HasReviveLikePower(NCreature creature)
     {

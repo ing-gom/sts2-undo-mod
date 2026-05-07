@@ -71,8 +71,16 @@ internal static class CreatureVisualRefresher
             // NCreature itself, not body manipulation, and skipping them broke
             // hover/click targeting after revive (reported 2026-04-30: "after
             // revive can't target with attacks, undo issue").
+            //
+            // Narrower gate `isLiveReviveAnim` — only skip body manipulation
+            // when there's a LIVE revive anim to fight with (IllusionPower
+            // etc.). DieForYou (Osty) is revive-like for AnimDie/StartDeathAnim
+            // delegation purposes but revives instantly (no live anim), so
+            // undo can safely restore Osty's body state. Reported 2026-05-08.
             bool isReviveLikeCreature = node != null
                 && Patches.AnimDiePatch.FindReviveLikePower(node) != null;
+            bool isLiveReviveAnim = node != null
+                && Patches.AnimDiePatch.FindLiveReviveAnimPower(node) != null;
             if (isReviveLikeCreature)
             {
                 UndoLogger.Warn($"[CreatureVisual] id={saved.CombatId} has revive-like power — skipping body manipulation, keeping targeting reset");
@@ -138,9 +146,11 @@ internal static class CreatureVisualRefresher
             // dead-snap branch, undoing back to a corpse state on a creature
             // that was revived since leaves it visually alive.
             //
-            // Skipped for revive-power creatures (IllusionPower etc.) — vanilla
-            // owns their visual lifecycle, our writes here would fight with it.
-            if (!isReviveLikeCreature && node != null && saved.HadVisualNode)
+            // Skipped only for LIVE-revive-anim powers (IllusionPower etc.) —
+            // vanilla's running tween/state-machine would clobber our writes.
+            // DieForYou is revive-like for AnimDie purposes but revives
+            // instantly with no live anim → safe to restore here.
+            if (!isLiveReviveAnim && node != null && saved.HadVisualNode)
             {
                 if (wasAliveInSnap)
                 {
@@ -320,7 +330,13 @@ internal static class CreatureVisualRefresher
             // vanilla's AnimateOut keep playing if it's mid-animation, or stay
             // hidden if already done. This restores HP bar after undo without
             // ramming into vanilla's mid-death animation.
+            //
+            // Narrower gate `isLiveReviveAnim` — only skip force-hide when
+            // there's a LIVE revive anim to fight with (IllusionPower etc.).
+            // DieForYou (Osty) revives instantly so undo can safely force-hide
+            // its StateDisplay when restoring a dead-in-snap state.
             bool isReviveLike = Patches.AnimDiePatch.FindReviveLikePower(node) != null;
+            bool isLiveReviveAnim = Patches.AnimDiePatch.FindLiveReviveAnimPower(node) != null;
 
             foreach (var n in WalkTree(node))
             {
@@ -367,13 +383,13 @@ internal static class CreatureVisualRefresher
                             sd.Position = origPos;
                         }
                     }
-                    else if (!isReviveLike)
+                    else if (!isLiveReviveAnim)
                     {
                         sd.Visible = false;
                         mod.A = 0f;
                         sd.Modulate = mod;
                     }
-                    // (Revive-like + dead-in-snap: skip force-hide — vanilla
+                    // (Live-revive-anim + dead-in-snap: skip force-hide — vanilla
                     //  owns the AnimateOut tween. Force-writing here would snap
                     //  to A=0 mid-tween and create the inconsistent gameplay
                     //  HP-bar behavior the user reported.)
