@@ -111,36 +111,33 @@ internal static class PowerRefresher
                 }
             }
 
-            // Diagnostic + forced visibility patch. NPower scenes default to
-            // modulate.a=0; the _Ready handler tween-lerps to 1 over 0.5s.
-            // If _Ready never runs (parent not in tree, deferred add not yet
-            // applied) the NPower stays invisible. Force visible state +
-            // re-invoke _Ready so the icon binds and the fly-in starts.
+            // Forced visibility patch. NPower scenes default to modulate.a=0
+            // and _Ready tween-lerps to 1 over 0.5s; on the freshly-rebuilt
+            // container after undo, we want the icon visible immediately
+            // rather than 0.5s later.
+            //
+            // We do NOT re-invoke _Ready here. Godot fires _Ready exactly
+            // once when a node enters the tree (whether AddChild was synchronous
+            // or deferred), and NPower._Ready connects mouse_entered /
+            // mouse_exited signals on that one call. Manually re-invoking
+            // _Ready on an in-tree node attempted a second connect of those
+            // signals and emitted the "Signal 'mouse_entered' is already
+            // connected" Godot ERROR on every undo.
             int patched = 0, alreadyOk = 0;
             for (int i = 0; i < powerNodes.Count; i++)
             {
-                if (powerNodes[i] is not Node n) continue;
+                if (powerNodes[i] is not CanvasItem ci) continue;
                 try
                 {
-                    if (n is CanvasItem ci)
+                    var m = ci.Modulate;
+                    bool wasInvisible = m.A < 0.99f || !ci.Visible;
+                    if (wasInvisible)
                     {
-                        var m = ci.Modulate;
-                        bool wasInvisible = m.A < 0.99f || !ci.Visible;
-                        if (wasInvisible)
-                        {
-                            ci.Visible = true;
-                            ci.Modulate = new Color(m.R, m.G, m.B, 1f);
-                            patched++;
-                        }
-                        else alreadyOk++;
+                        ci.Visible = true;
+                        ci.Modulate = new Color(m.R, m.G, m.B, 1f);
+                        patched++;
                     }
-                    // Force-invoke _Ready to bind _icon / _amountLabel etc. if
-                    // the deferred add path skipped it.
-                    if (n.IsInsideTree())
-                    {
-                        var readyMethod = HarmonyLib.AccessTools.Method(n.GetType(), "_Ready");
-                        try { readyMethod?.Invoke(n, null); } catch { }
-                    }
+                    else alreadyOk++;
                 }
                 catch { }
             }

@@ -60,9 +60,18 @@ public static class PatchNGameInput
     }
 
     /// <summary>True if RMB is currently held OR was released within the
-    /// grace window. Used as the snapshot-suppression gate.</summary>
+    /// grace window. Used as the snapshot-suppression gate.
+    ///
+    /// Polls <see cref="Godot.Input.IsMouseButtonPressed"/> as well as the
+    /// event-tracked <see cref="RmbHeld"/> flag. v0.0.7 relied on
+    /// <c>NGame._Input</c> alone, but on STS2 v0.103.2 the RMB-down event
+    /// for the in-hand upgrade preview can be consumed before reaching our
+    /// <c>_Input</c> prefix (the card's own GUI input swallows it), so
+    /// <see cref="RmbHeld"/> never flips true and the suppression gate
+    /// misses. The static polling API works regardless of event routing.</summary>
     public static bool IsInRmbWindow()
         => RmbHeld
+           || Godot.Input.IsMouseButtonPressed(MouseButton.Right)
            || (System.Environment.TickCount64 - RmbReleasedAtMs) <= RmbGraceMs;
 }
 

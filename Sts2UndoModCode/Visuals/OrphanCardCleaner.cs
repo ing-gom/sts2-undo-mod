@@ -37,11 +37,21 @@ internal static class OrphanCardCleaner
             }
         }
 
-        int freed = 0, skipped = 0;
+        int freed = 0, skipped = 0, skippedScreen = 0;
         foreach (var node in EnumerateAll(root))
         {
             if (node is not NCard card) continue;
             if (legitimate.Contains(card)) { skipped++; continue; }
+
+            // Skip NCards owned by a screen overlay (NInspectCardScreen,
+            // NChooseACardSelectionScreen, etc.). These are NOT hand-play
+            // orphans — they're scene-scoped children of the screen, and
+            // freeing them leaves the screen's `_card` / `_cardRow` field
+            // pointing at a disposed Godot wrapper. The next tween or
+            // close-callback on the screen (e.g. NInspectCardScreen.Close →
+            // TweenProperty(_card, "modulate", ...)) then throws
+            // ObjectDisposedException.
+            if (HasScreenAncestor(card)) { skippedScreen++; continue; }
 
             // Kill any running tween before queue-free so cleanup can't be
             // resurrected by a tween callback.
@@ -55,7 +65,30 @@ internal static class OrphanCardCleaner
             catch (Exception ex) { UndoLogger.Warn($"[Orphan] free failed: {ex.Message}"); }
         }
 
-        if (freed > 0) UndoLogger.Info($"[Orphan] freed={freed} kept={skipped}");
+        if (freed > 0 || skippedScreen > 0)
+            UndoLogger.Info($"[Orphan] freed={freed} kept={skipped} keptScreen={skippedScreen}");
+    }
+
+    /// <summary>
+    /// Walk up the parent chain; return true if any ancestor's type name
+    /// ends with "Screen" or its namespace starts with the screens root.
+    /// Substring-match keeps us decoupled from concrete class references
+    /// (NInspectCardScreen, NChooseACardSelectionScreen, NInspectRelicScreen,
+    /// NEpochInspectScreen, …) — adding a new screen subclass in a future
+    /// STS2 update doesn't need a code update here.
+    /// </summary>
+    private static bool HasScreenAncestor(Node node)
+    {
+        var p = node.GetParent();
+        while (p != null)
+        {
+            var t = p.GetType();
+            if (t.Name.EndsWith("Screen", StringComparison.Ordinal)) return true;
+            var ns = t.Namespace;
+            if (ns != null && ns.Contains(".Screens", StringComparison.Ordinal)) return true;
+            p = p.GetParent();
+        }
+        return false;
     }
 
     private static void KillKnownTweens(NCard card)
