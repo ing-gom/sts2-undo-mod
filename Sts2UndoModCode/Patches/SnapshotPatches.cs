@@ -1,6 +1,8 @@
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.GameActions;
+using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Runs;
 using Sts2UndoMod.Sts2UndoModCode.Snapshot;
 using Sts2UndoMod.Sts2UndoModCode.Ui;
 using Sts2UndoMod.Sts2UndoModCode.Undo;
@@ -176,5 +178,53 @@ public static class PatchStartTurn
             CombatSnapshot.RefreshIdleCacheFromLiveCreatures();
         }
         catch (Exception ex) { UndoLogger.Warn($"[Patch] StartTurn: {ex.Message}"); }
+    }
+}
+
+// AI auto-play coverage. Sibling mods like Sts2CombatAI (Vakuu auto-play)
+// drive the player's turn by calling CardModel.SpendResources() and
+// CardCmd.AutoPlay() directly — they never construct a PlayCardAction, so
+// the ctor-based snapshot patches above silently miss every AI-driven card
+// play and undo finds an empty stack. Patching SpendResources fills that
+// gap: it's the universal pre-play boundary called by both vanilla
+// PlayCardAction.Execute (where the executor is busy → skipped here, the
+// ctor patch already captured) and bespoke AI flows (executor idle → we
+// capture here, before any state mutation).
+//
+// The IsActionExecutorBusy gate is what makes this safe to add. Without
+// it, manual card plays would snapshot twice (once at ctor, once at
+// SpendResources mid-Execute), splitting one logical play into two undo
+// entries AND the second snapshot would capture a half-applied state.
+[HarmonyPatch(typeof(CardModel), nameof(CardModel.SpendResources))]
+public static class PatchCardSpendResources
+{
+    [HarmonyPrefix]
+    public static void Prefix()
+    {
+        if (MultiplayerGate.IsDormant()) return;
+        if (PatchNGameInput.IsInRmbWindow()) return;
+        if (IsActionExecutorBusy()) return;
+
+        UndoController.TakeSnapshot();
+    }
+
+    private static bool IsActionExecutorBusy()
+    {
+        try
+        {
+            var executor = RunManager.Instance?.ActionExecutor;
+            if (executor == null) return false;
+            // Mirror UndoController.HasInFlightExecutorAction's field probe — the
+            // game's ActionExecutor stores the in-flight action under one of
+            // these names depending on version; any non-null value means we're
+            // mid-execution and another action's ctor already captured.
+            foreach (var name in new[] { "_currentAction", "_executingAction", "_action" })
+            {
+                var f = AccessTools.Field(executor.GetType(), name);
+                if (f?.GetValue(executor) != null) return true;
+            }
+            return false;
+        }
+        catch { return false; }
     }
 }
