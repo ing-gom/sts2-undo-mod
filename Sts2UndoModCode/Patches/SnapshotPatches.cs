@@ -58,6 +58,12 @@ public static class SnapshotPatches
 
     public static void SnapshotPrefix(MethodBase __originalMethod)
     {
+        // Multiplayer / replay short-circuit. The base game runs its own
+        // CombatStateSynchronizer in co-op; layering our deep-clone on top of
+        // every action ctor stacks two state snapshots per move and makes
+        // co-op sessions unplayably laggy. Bail before we touch anything.
+        if (MultiplayerGate.IsDormant()) return;
+
         // RMB-window suppression: STS2 v0.104.0+ beta reportedly constructs
         // synthetic action instances (e.g. PlayCardAction) to compute the
         // right-click upgrade preview. Each construction would otherwise
@@ -135,6 +141,9 @@ public static class PatchStartCombatInternal
         CombatSnapshot.IdleAnimCache.Clear();
         AnimDiePatch.ClearDetached();
         DeathAnimDelayPatch.ClearAll();
+        // Re-arm the once-per-combat dormant-status log so a co-op session
+        // logs "[Undo] dormant" once per fight (not on every action ctor).
+        MultiplayerGate.ResetForNewCombat();
         UndoLogger.Info("[Patch] StartCombatInternal — wiped previous-combat residue");
     }
 }
@@ -147,6 +156,13 @@ public static class PatchStartTurn
     {
         try
         {
+            // Multiplayer / replay: skip button install + turn-boundary arming.
+            // Snapshots are gated below at SnapshotPrefix, but installing the
+            // UI button would still attach a 10 Hz Godot Timer + state polling
+            // that adds noise to a co-op session for no benefit (stack stays
+            // empty, button would just pulse-disabled forever).
+            if (MultiplayerGate.IsDormant()) return;
+
             var cs = ReflectionCache.CombatManagerStateField.GetValue(__instance) as CombatState;
             if (cs?.CurrentSide == CombatSide.Player)
             {

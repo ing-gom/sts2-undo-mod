@@ -2549,17 +2549,25 @@ internal static class SnapshotRestorer
         // power that ends up in the rebuilt list. Hook subscribers in
         // STS2 use HookSubscribers collections that no-op on duplicate
         // add and unhook-not-hooked, so the unconditional cycle is safe.
-        var byId = new Dictionary<ModelId, PowerModel>();
+        //
+        // Match snap → live by Ref equality, NOT by Id. Powers with
+        // `IsInstanced = true` (Regent's OrbitPower, etc.) keep multiple
+        // distinct instances on the same creature that all share an Id;
+        // an Id-keyed dictionary collapses them to the last one inserted,
+        // and every snap entry's Amount / _internalData then overwrites
+        // the same live instance, "unifying" all N stacks to a single
+        // recorded count after an undo. Ref-keyed lookup hits each
+        // instance exactly once.
+        var liveSet = new HashSet<PowerModel>();
         foreach (var item in liveList)
-            if (item is PowerModel pm) byId[pm.Id] = pm;
+            if (item is PowerModel pm) liveSet.Add(pm);
 
         // Phase 1: Deactivate hooks on EVERY live power (whether it's going to
-        // be retained, dropped, or replaced). Snapshot's powers may also need
-        // their Refs deactivated if they happen to still have stale subscriptions
-        // (e.g. game removed from _powers but didn't deactivate). Deactivate is
-        // idempotent — safe to call on a not-currently-subscribed instance.
+        // be retained, dropped, or replaced). Iterate liveList directly — the
+        // prior by-Id loop missed all but one instance per Id for instanced
+        // powers, leaving stale hook subscriptions on the rest.
         int deactivated = 0;
-        foreach (var (_, livePower) in byId)
+        foreach (var livePower in liveSet)
             if (TryDeactivatePowerHooks(livePower)) deactivated++;
         // Also deactivate any snapshot Refs whose live instance ISN'T in the
         // current list — those refs were stripped from the creature but may
@@ -2568,26 +2576,38 @@ internal static class SnapshotRestorer
         foreach (var s in saved.Powers)
         {
             if (s.Ref == null) continue;
-            if (byId.ContainsKey(s.Id)) continue;  // already handled above
+            if (liveSet.Contains(s.Ref)) continue;  // already handled above
             if (TryDeactivatePowerHooks(s.Ref)) deactivated++;
         }
 
         liveList.Clear();
         var rebuilt = new List<PowerModel>();
         int reattached = 0;
+        // Track which live instances have already been claimed by a snap
+        // entry so a second snap entry with the same Id can't double-bind
+        // to the same live instance (only matters when Ref matching falls
+        // through to the reattach path, but cheap insurance regardless).
+        var consumed = new HashSet<PowerModel>();
         foreach (var snapPower in saved.Powers)
         {
             PowerModel? live = null;
-            if (!byId.TryGetValue(snapPower.Id, out live))
+            // Primary lookup: snapshot Ref still alive AND in the current
+            // live list AND not yet consumed by an earlier snap entry.
+            if (snapPower.Ref != null && liveSet.Contains(snapPower.Ref)
+                && !consumed.Contains(snapPower.Ref))
             {
-                // Power doesn't exist live — most commonly because the
-                // creature died and the game stripped its `_powers` list,
-                // OR the power's amount went to 0 and was removed. We held
-                // a strong ref at snapshot time; reattach the same instance
+                live = snapPower.Ref;
+            }
+            if (live == null)
+            {
+                // Ref isn't in the live list — most commonly the creature
+                // died and the game stripped its `_powers` list, OR the
+                // power's amount went to 0 and was removed. We held a
+                // strong ref at snapshot time; reattach the same instance
                 // by reflecting `_owner` (the public setter throws once
                 // owner != null and value differs — and the game cleared
                 // owner=null when stripping).
-                if (snapPower.Ref != null)
+                if (snapPower.Ref != null && !consumed.Contains(snapPower.Ref))
                 {
                     try
                     {
@@ -2600,6 +2620,7 @@ internal static class SnapshotRestorer
                 }
                 if (live == null) continue;
             }
+            consumed.Add(live);
             ReflectionCache.PowerAmountField.SetValue(live, snapPower.Amount);
             ReflectionCache.PowerAmountOnTurnStartField.SetValue(live, snapPower.AmountOnTurnStart);
             ReflectionCache.PowerSkipField.SetValue(live, snapPower.SkipNextDurationTick);
