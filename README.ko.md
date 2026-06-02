@@ -58,6 +58,13 @@
    ```
 3. 게임을 실행합니다.
 
+> **안정판 vs 베타 브랜치:** 버전마다 두 가지 빌드가 배포됩니다 —
+> **안정판** 브랜치용 `Sts2UndoMod-vX.Y.Z.zip` (STS2 v0.103.x) 과
+> **베타 옵트인** 브랜치용 `Sts2UndoMod-vX.Y.Z-beta.zip` (STS2 v0.104.0+,
+> 현재 v0.106.x). 본인 브랜치에 맞는 파일을 받으세요 (Steam → Slay the
+> Spire 2 → 속성 → 베타). 브랜치 간 STS2 API가 다르기 때문에, 잘못된 빌드를
+> 쓰면 첫 카드 사용 시 `MissingMethodException`이 발생합니다.
+
 ## 소스에서 빌드
 
 필요한 환경:
@@ -79,6 +86,18 @@ dotnet build Sts2UndoMod.csproj -c Release
 ~/.config/Sts2UndoMod/probe.log   (Linux/macOS)
 ```
 이슈 등록 시 함께 첨부해 주세요.
+
+## 변경 이력
+
+전체 내용은 [GitHub Releases](../../releases) 참조.
+
+- **v0.0.12** — 카드 한 장을 냈는데 `Z`를 두 번 눌러야 되돌려지던 버그 수정
+  (스냅샷 중복 방지 게이트가 존재하지 않는 `ActionExecutor` 필드를 검사해서
+  수동 플레이마다 스냅샷이 두 번 찍히던 문제). 유물이 많은 덱에서 카드 사용
+  시마다 생기던 끊김도 수정 (캡처 핫패스의 중복 유물 deep-clone 제거).
+- **v0.0.10** — 멀티플레이 자동 비활성화, 인스턴스 파워(오빗) 되돌리기 정확도,
+  자매 모드([Sts2CombatAI](https://github.com/ing-gom/sts2-combat-ai)) AI
+  자동 플레이 커버리지.
 
 ## 크레딧
 

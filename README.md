@@ -58,6 +58,14 @@ combat. Delete that file to reset the position to default.
    ```
 3. Launch the game.
 
+> **Stable vs beta branch:** two builds are published per version —
+> `Sts2UndoMod-vX.Y.Z.zip` for the **stable** branch (STS2 v0.103.x) and
+> `Sts2UndoMod-vX.Y.Z-beta.zip` for the **beta opt-in** branch (STS2
+> v0.104.0+, currently v0.106.x). Download the one matching your branch
+> (Steam → Slay the Spire 2 → Properties → Betas). Running the wrong build
+> throws `MissingMethodException` on the first card play, because the STS2
+> API differs between branches.
+
 ## Building from source
 
 Requirements:
@@ -79,6 +87,19 @@ The mod writes a log to:
 ~/.config/Sts2UndoMod/probe.log   (Linux/macOS)
 ```
 Attach this when reporting issues.
+
+## Changelog
+
+Full notes on [GitHub Releases](../../releases).
+
+- **v0.0.12** — Fixed a duplicate-undo bug where one card play required two
+  presses of `Z` (the snapshot-dedup gate probed a non-existent
+  `ActionExecutor` field, so every manual play snapshotted twice). Also
+  fixed a per-card-play stutter on relic-heavy runs by removing a redundant
+  relic deep-clone from the capture hot path.
+- **v0.0.10** — Multiplayer auto-dormant, instanced-power (Orbit) undo
+  fidelity, and sibling-mod ([Sts2CombatAI](https://github.com/ing-gom/sts2-combat-ai))
+  AI auto-play coverage.
 
 ## Credits
 
