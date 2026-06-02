@@ -2725,9 +2725,6 @@ internal static class SnapshotRestorer
             ReflectionCache.RelicStackCountField?.SetValue(live, rs.StackCount);
             if (ReflectionCache.RelicStatusProperty?.CanWrite == true && rs.Status != null)
                 ReflectionCache.RelicStatusProperty.SetValue(live, rs.Status);
-            if (ReflectionCache.RelicDynamicVarsField != null)
-                ReflectionCache.RelicDynamicVarsField.SetValue(
-                    live, DeepCloner.CloneObject(rs.DynamicVarsClone));
 
             // Copy MutableClone() result fields back onto the live instance.
             // The clone was produced by the game's own RelicModel.MutableClone
@@ -2736,7 +2733,9 @@ internal static class SnapshotRestorer
             // Opener counters, etc.) is correctly isolated from subsequent
             // live mutations. Walk every instance field and write clone→live,
             // skipping identity-bearing/event/static fields that must stay
-            // pinned to the live instance.
+            // pinned to the live instance. This field-copy also restores
+            // _dynamicVars (deep-cloned inside MutableClone), so no separate
+            // DynamicVars restore is needed on this path.
             if (rs.Clone != null && live.GetType() == rs.Clone.GetType())
             {
                 foreach (var f in GetRelicCopyFields(live.GetType()))
@@ -2744,6 +2743,14 @@ internal static class SnapshotRestorer
                     try { f.SetValue(live, f.GetValue(rs.Clone)); }
                     catch { }
                 }
+            }
+            else if (rs.DynamicVarsClone != null && ReflectionCache.RelicDynamicVarsField != null)
+            {
+                // Fallback only: MutableClone failed at capture, so there is no
+                // clone to field-copy _dynamicVars from. Restore the reflection
+                // clone captured for exactly this case (see CombatSnapshot.CaptureRelic).
+                ReflectionCache.RelicDynamicVarsField.SetValue(
+                    live, DeepCloner.CloneObject(rs.DynamicVarsClone));
             }
         }
     }

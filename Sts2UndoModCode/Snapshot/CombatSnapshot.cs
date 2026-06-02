@@ -303,8 +303,18 @@ internal sealed class CombatSnapshot
             Id = rm.Id,
             StackCount = (int)(ReflectionCache.RelicStackCountField?.GetValue(rm) ?? 0),
             Status = ReflectionCache.RelicStatusProperty?.GetValue(rm),
-            DynamicVarsClone = DeepCloner.CloneObject(
-                ReflectionCache.RelicDynamicVarsField?.GetValue(rm)),
+            // DynamicVars are already deep-cloned *inside* MutableClone
+            // (RelicModel.DeepCloneFields → DynamicVars.Clone, the game's own
+            // per-var compiled clone), and RestoreRelics copies that clone's
+            // _dynamicVars field back onto the live relic. The separate
+            // reflection-based DeepCloner.CloneObject below re-walked the full
+            // ~28-entry DynamicVarSet graph for every relic on every card play —
+            // the dominant snapshot-capture cost (issue #2: 63-188ms / 21 relics,
+            // ~100% of slow captures). Only compute it as a fallback for the rare
+            // case MutableClone threw and left no clone for the field-copy to use.
+            DynamicVarsClone = clone == null
+                ? DeepCloner.CloneObject(ReflectionCache.RelicDynamicVarsField?.GetValue(rm))
+                : null,
             Clone = clone,
         };
     }

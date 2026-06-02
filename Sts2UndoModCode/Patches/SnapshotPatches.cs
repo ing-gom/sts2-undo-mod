@@ -214,10 +214,16 @@ public static class PatchCardSpendResources
         {
             var executor = RunManager.Instance?.ActionExecutor;
             if (executor == null) return false;
-            // Mirror UndoController.HasInFlightExecutorAction's field probe — the
-            // game's ActionExecutor stores the in-flight action under one of
-            // these names depending on version; any non-null value means we're
-            // mid-execution and another action's ctor already captured.
+            // The game's ActionExecutor exposes the in-flight action via the
+            // public auto-property CurrentlyRunningAction, set in ExecuteActions
+            // BEFORE GameAction.Execute() (and thus before CardModel.SpendResources)
+            // runs. A non-null value means a manual play's ctor patch already
+            // captured this snapshot — skip the duplicate. The old field-name
+            // probe below never matched (real backing field is compiler-generated),
+            // so the gate misfired and every manual play snapshotted twice.
+            var prop = AccessTools.Property(executor.GetType(), "CurrentlyRunningAction");
+            if (prop?.GetValue(executor) != null) return true;
+            // Fallback: tolerate a future rename to a plain field.
             foreach (var name in new[] { "_currentAction", "_executingAction", "_action" })
             {
                 var f = AccessTools.Field(executor.GetType(), name);

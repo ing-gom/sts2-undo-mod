@@ -3,7 +3,7 @@
   "name": "StS2 Undo",
   "author": "inggom",
   "description": "전투 진입 시점부터 종료 전까지 카드 한 장 / 한 턴 단위로 되돌릴 수 있게 합니다. 사망 후에는 되돌릴 수 없습니다.",
-  "version": "v0.0.11-beta",
+  "version": "v0.0.12",
   "has_pck": false,
   "has_dll": true,
   "dependencies": [],

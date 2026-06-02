@@ -387,7 +387,18 @@ internal static class UndoController
     {
         var executor = MegaCrit.Sts2.Core.Runs.RunManager.Instance?.ActionExecutor;
         if (executor == null) return false;
-        // Try common field names for the "currently executing" slot.
+        // The in-flight slot is exposed as the public auto-property
+        // ActionExecutor.CurrentlyRunningAction (set in ExecuteActions BEFORE
+        // GameAction.Execute() runs). Probe it first — the old field-name guesses
+        // below never matched (the real backing field is a compiler-generated
+        // <CurrentlyRunningAction>k__BackingField), so the gate was always false.
+        var prop = HarmonyLib.AccessTools.Property(executor.GetType(), "CurrentlyRunningAction");
+        if (prop?.GetValue(executor) != null)
+        {
+            UndoLogger.Info("[Undo] blocked: executor.CurrentlyRunningAction non-null");
+            return true;
+        }
+        // Fallback: tolerate a future rename to a plain field.
         foreach (var name in new[] { "_currentAction", "_executingAction", "_action" })
         {
             var f = HarmonyLib.AccessTools.Field(executor.GetType(), name);
