@@ -26,7 +26,13 @@ internal static class MultiplayerGate
         {
             var rm = RunManager.Instance;
             if (rm == null || !rm.IsInProgress) return false;
-            if (rm.IsSinglePlayerOrFakeMultiplayer) return false;
+            // beta (game build 23575630): RunManager.IsSinglePlayerOrFakeMultiplayer
+            // was removed. Reconstruct it from NetService.Type — undo stays active
+            // for solo play (Singleplayer / None / no service); only the real
+            // networked or replay modes (Host / Client / Replay) go dormant.
+            var netType = rm.NetService?.Type;
+            if (netType is not (NetGameType.Host or NetGameType.Client or NetGameType.Replay))
+                return false;
 
             if (!_loggedDormantThisCombat)
             {
