@@ -639,6 +639,15 @@ internal sealed class CombatSnapshot
 
     private static bool IsTransientName(string name)
     {
+        // A loop-shaped anim (`die_loop`, `dead_loop`, `stun_loop`, `idle`…) is a
+        // SETTLED state, not an in-flight one-shot — undo is safe while it loops.
+        // WaterfallGiant (폭포 거인) enters a stunned "fake death" at 0 HP (HP→∞)
+        // and sits in `die_loop` indefinitely while still alive in cs.Creatures.
+        // Without this guard the "die"/"death" substring below matches that loop
+        // forever, so AnyCreatureMidTransient stays true and undo is permanently
+        // blocked (Z key dead). Reported as issue #3 (2026-06-16). Only genuine
+        // one-shot transients (attack/cast/hurt/die one-shot, no _loop) gate undo.
+        if (IsLoopShaped(name)) return false;
         foreach (var s in TransientPatterns)
             if (name.IndexOf(s, StringComparison.OrdinalIgnoreCase) >= 0) return true;
         return false;

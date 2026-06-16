@@ -92,6 +92,11 @@ Attach this when reporting issues.
 
 Full notes on [GitHub Releases](../../releases).
 
+- **v0.0.14** — Fixed undo becoming permanently disabled (`Z` unresponsive)
+  after an enemy enters a stunned "fake death" state — e.g. the Waterfall Giant
+  drops to 0 HP, flips to infinite HP, and loops its `die` animation. The undo
+  guard mistook that settled `*_loop` pose for an in-progress death animation
+  and blocked undo for the rest of the fight. ([#3](../../issues/3))
 - **v0.0.12** — Fixed a duplicate-undo bug where one card play required two
   presses of `Z` (the snapshot-dedup gate probed a non-existent
   `ActionExecutor` field, so every manual play snapshotted twice). Also
