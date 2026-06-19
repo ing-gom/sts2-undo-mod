@@ -58,13 +58,12 @@ combat. Delete that file to reset the position to default.
    ```
 3. Launch the game.
 
-> **Stable vs beta branch:** two builds are published per version —
-> `Sts2UndoMod-vX.Y.Z.zip` for the **stable** branch (STS2 v0.103.x) and
-> `Sts2UndoMod-vX.Y.Z-beta.zip` for the **beta opt-in** branch (STS2
-> v0.104.0+, currently v0.106.x). Download the one matching your branch
-> (Steam → Slay the Spire 2 → Properties → Betas). Running the wrong build
-> throws `MissingMethodException` on the first card play, because the STS2
-> API differs between branches.
+> **Single build (stable):** as of STS2 **`v0.107`** the public stable branch
+> caught up to the API the old beta builds targeted, so the stable/beta split is
+> gone — only one build is published per version (`Sts2UndoMod-vX.Y.Z.zip`).
+> Built and tested on **STS2 `v0.107.1`** (default branch). Slay the Spire 2 is in
+> Early Access; a future game update can break the mod until it's rebuilt, so if
+> undo stops working after a patch, check for a mod update.
 
 ## Building from source
 
